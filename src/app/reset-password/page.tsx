@@ -6,7 +6,7 @@ import { Suspense, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api-client";
-import { AuthShowcasePanel } from "@/app/auth/page";
+import { AuthShowcasePanel } from "@/components/auth-showcase-panel";
 import { errMsg } from "@/lib/format";
 
 function ResetForm() {

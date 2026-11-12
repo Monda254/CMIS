@@ -116,6 +116,10 @@ export const receipts = pgTable(
     notes: text("notes").notNull().default(""),
     currency: text("currency").notNull().default("KES"),
     total: numeric("total", { precision: 14, scale: 2 }).notNull().default("0.00"),
+    paymentStatus: text("payment_status").notNull().default("paid"),
+    amountPaid: numeric("amount_paid", { precision: 14, scale: 2 }).notNull().default("0.00"),
+    balanceDue: numeric("balance_due", { precision: 14, scale: 2 }).notNull().default("0.00"),
+    paymentMethod: text("payment_method").notNull().default("M-Pesa"),
     companySnapshot: jsonb("company_snapshot").$type<CompanySnapshot | null>(),
     createdBy: uuid("created_by")
       .notNull()

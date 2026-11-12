@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Copy,
   Download,
+  ExternalLink,
   FileDown,
   MoreHorizontal,
   Plus,
@@ -15,10 +16,19 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatMoney, sanitizeSpreadsheetCell } from "@/lib/format";
+import {
+  PAYMENT_STATUS_OPTIONS,
+  PaymentStatusBadge,
+  type PaymentStatus,
+} from "@/components/status-badge";
 
 type ReceiptRow = {
   id: string;
   status: "draft" | "finalized" | "cancelled";
+  payment_status?: PaymentStatus;
+  amount_paid?: string | number;
+  balance_due?: string | number;
+  payment_method?: string;
   receipt_number: string | null;
   verification_code?: string | null;
   client_id?: string | null;
@@ -31,7 +41,7 @@ type ReceiptRow = {
   clients?: { name: string } | null;
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 export default function ReceiptsListPage() {
   return (
@@ -49,6 +59,7 @@ function ReceiptsListContent() {
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const [paymentFilter, setPaymentFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -66,14 +77,30 @@ function ReceiptsListContent() {
 
   const allRows = list.data ?? [];
   const totalCount = allRows.length;
-  const finalizedCount = allRows.filter((r) => r.status === "finalized").length;
-  const draftsCount = allRows.filter((r) => r.status === "draft").length;
+  const paidCount = allRows.filter((r) => r.status === "finalized" && (r.payment_status ?? "paid") === "paid").length;
+  const partialOrUnpaidCount = allRows.filter(
+    (r) =>
+      r.status === "finalized" &&
+      ["half_paid", "unpaid", "in_progress", "overdue", "disputed"].includes(r.payment_status ?? "paid"),
+  ).length;
+  const failedOrCancelledCount = allRows.filter(
+    (r) => r.status === "cancelled" || r.payment_status === "failed" || r.payment_status === "refunded",
+  ).length;
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     const now = new Date();
     return allRows.filter((r) => {
       if (status !== "all" && r.status !== status) return false;
+      if (paymentFilter !== "all") {
+        if (paymentFilter === "cancelled") {
+          if (r.status !== "cancelled") return false;
+        } else if (paymentFilter === "draft") {
+          if (r.status !== "draft") return false;
+        } else {
+          if ((r.payment_status ?? "paid") !== paymentFilter) return false;
+        }
+      }
       if (dateFilter !== "all") {
         const dt = new Date(r.finalized_at ?? r.created_at);
         if (dateFilter === "today") {
@@ -89,10 +116,11 @@ function ReceiptsListContent() {
         (r.receipt_number ?? "draft").toLowerCase().includes(s) ||
         (r.verification_code ?? "").toLowerCase().includes(s) ||
         r.customer_name.toLowerCase().includes(s) ||
+        (r.payment_status ?? "").toLowerCase().includes(s) ||
         (r.clients?.name ?? "").toLowerCase().includes(s)
       );
     });
-  }, [allRows, q, status, dateFilter]);
+  }, [allRows, q, status, paymentFilter, dateFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -119,7 +147,18 @@ function ReceiptsListContent() {
   };
 
   const handleExportCsv = () => {
-    const headers = ["Receipt Number", "Client", "Verification Code", "Issued Date", "Amount", "Currency", "Status"];
+    const headers = [
+      "Receipt Number",
+      "Client",
+      "Verification Code",
+      "Issued Date",
+      "Total Amount",
+      "Amount Paid",
+      "Balance Due",
+      "Currency",
+      "Payment Status",
+      "Document Status",
+    ];
     const lines = [
       headers.join(","),
       ...filtered.map((r) =>
@@ -129,7 +168,10 @@ function ReceiptsListContent() {
           sanitizeSpreadsheetCell(r.verification_code ?? "Not issued yet"),
           sanitizeSpreadsheetCell(formatDate(r.finalized_at ?? r.created_at)),
           Number(r.total).toFixed(2),
+          Number(r.amount_paid ?? r.total).toFixed(2),
+          Number(r.balance_due ?? 0).toFixed(2),
           sanitizeSpreadsheetCell(r.currency),
+          sanitizeSpreadsheetCell(r.payment_status ?? "paid"),
           sanitizeSpreadsheetCell(r.status),
         ]
           .map((c) => `"${String(c).replace(/"/g, '""')}"`)
@@ -152,11 +194,19 @@ function ReceiptsListContent() {
         <div>
           <h1 className="font-display text-[28px] font-bold tracking-tight text-[#20232D]">Receipts</h1>
           <p className="mt-0.5 text-[14px] text-[#7A7F8C]">
-            Every receipt. Organized, protected, and easy to find.
+            Every receipt type — Paid, Half Paid, Not Paid, In Progress, Failed, Overdue, Refunded, Disputed, Cancelled, and Drafts.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
+          <Link
+            href="/verify"
+            className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[#5848D6]/30 bg-[#EEECFC] px-4 text-[13px] font-semibold text-[#5848D6] transition-colors hover:bg-[#E2DFFA]"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Test public verification
+          </Link>
+
           <button
             type="button"
             onClick={handleExportCsv}
@@ -176,8 +226,8 @@ function ReceiptsListContent() {
         </div>
       </div>
 
-      {/* 3 KPI Summary Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {/* 4 KPI Summary Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
           <p className="text-[12.5px] font-medium text-[#7A7F8C]">All receipts</p>
           <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
@@ -186,16 +236,23 @@ function ReceiptsListContent() {
         </div>
 
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
-          <p className="text-[12.5px] font-medium text-[#7A7F8C]">Finalized</p>
-          <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
-            {finalizedCount}
+          <p className="text-[12.5px] font-medium text-[#16794F]">Paid in full</p>
+          <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#16794F]">
+            {paidCount}
           </p>
         </div>
 
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
-          <p className="text-[12.5px] font-medium text-[#7A7F8C]">Drafts</p>
-          <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
-            {draftsCount}
+          <p className="text-[12.5px] font-medium text-[#3730A3]">Half Paid / Unpaid / In Progress</p>
+          <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#3730A3]">
+            {partialOrUnpaidCount}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
+          <p className="text-[12.5px] font-medium text-[#B4343B]">Failed / Refunded / Cancelled</p>
+          <p className="mt-2 font-display text-[26px] font-bold tracking-tight tabular text-[#B4343B]">
+            {failedOrCancelledCount}
           </p>
         </div>
       </div>
@@ -203,17 +260,48 @@ function ReceiptsListContent() {
       {/* Main Receipts Table Card */}
       <div className="rounded-xl border border-[#E6E8EF] bg-white">
         <div className="p-6 space-y-4">
-          <div className="flex items-baseline gap-2.5">
-            <h2 className="font-display text-[16px] font-bold text-[#20232D]">All receipts</h2>
-            <span className="text-[12.5px] text-[#7A7F8C]">{filtered.length} receipts</span>
-            {clientFilter && (
-              <Link
-                href="/receipts"
-                className="ml-2 text-[12px] font-semibold text-[#5848D6] hover:underline"
-              >
-                Clear client filter ×
-              </Link>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-baseline gap-2.5">
+              <h2 className="font-display text-[16px] font-bold text-[#20232D]">All receipts</h2>
+              <span className="text-[12.5px] text-[#7A7F8C]">{filtered.length} receipts</span>
+              {clientFilter && (
+                <Link
+                  href="/receipts"
+                  className="ml-2 text-[12px] font-semibold text-[#5848D6] hover:underline"
+                >
+                  Clear client filter ×
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Payment Status Filter Pills */}
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: "all", label: "All Types" },
+              ...PAYMENT_STATUS_OPTIONS.map((o) => ({ id: o.value, label: o.shortLabel })),
+              { id: "cancelled", label: "Cancelled" },
+              { id: "draft", label: "Drafts" },
+            ].map((tab) => {
+              const active = paymentFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setPaymentFilter(tab.id);
+                    setPage(1);
+                  }}
+                  className={`rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                    active
+                      ? "border-[#5848D6] bg-[#5848D6] text-white"
+                      : "border-[#E6E8EF] bg-[#F7F8FA] text-[#4A4F5C] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
           {/* Filter Bar */}
@@ -226,7 +314,7 @@ function ReceiptsListContent() {
                   setQ(e.target.value);
                   setPage(1);
                 }}
-                placeholder="Search receipt no., verification code, or client"
+                placeholder="Search receipt no., verification code, client, or status"
                 className="h-10 w-full rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] text-[#20232D] outline-none placeholder:text-[#7A7F8C] focus:border-[#5848D6]"
               />
             </div>
@@ -255,10 +343,10 @@ function ReceiptsListContent() {
                   setStatus(e.target.value);
                   setPage(1);
                 }}
-                aria-label="Receipt status filter"
+                aria-label="Receipt document status filter"
                 className="h-10 w-full rounded-lg border border-[#E6E8EF] bg-white px-3 text-[13px] font-medium text-[#20232D] outline-none focus:border-[#5848D6]"
               >
-                <option value="all">All statuses</option>
+                <option value="all">All doc states</option>
                 <option value="finalized">Finalized</option>
                 <option value="draft">Draft</option>
                 <option value="cancelled">Cancelled</option>
@@ -271,6 +359,7 @@ function ReceiptsListContent() {
                 onClick={() => {
                   setQ("");
                   setStatus("all");
+                  setPaymentFilter("all");
                   setDateFilter("all");
                   setPage(1);
                 }}
@@ -291,21 +380,36 @@ function ReceiptsListContent() {
                 <th className="px-6 py-3">Receipt number</th>
                 <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">Verification code</th>
-                <th className="px-4 py-3">Issued</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Total / Paid / Due</th>
+                <th className="px-4 py-3">Payment type</th>
+                <th className="px-4 py-3">Doc state</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E6E8EF] text-[13px]">
               {pageRows.map((r) => {
                 const href = r.status === "draft" ? `/receipts/${r.id}/edit` : `/receipts/${r.id}`;
+                const totalNum = Number(r.total ?? 0);
+                const paidNum =
+                  r.amount_paid !== undefined && r.amount_paid !== null
+                    ? Number(r.amount_paid)
+                    : (r.payment_status ?? "paid") === "paid"
+                      ? totalNum
+                      : 0;
+                const dueNum =
+                  r.balance_due !== undefined && r.balance_due !== null
+                    ? Number(r.balance_due)
+                    : Math.max(0, totalNum - paidNum);
+
                 return (
                   <tr key={r.id} className="transition-colors hover:bg-[#F7F8FA]/60">
                     <td className="px-6 py-4">
-                      <Link href={href} className="font-medium text-[#5848D6] hover:underline">
+                      <Link href={href} className="font-mono font-semibold text-[#5848D6] hover:underline">
                         {r.receipt_number ?? `Draft (${r.id.slice(0, 6)})`}
                       </Link>
+                      <p className="mt-0.5 text-[11px] text-[#7A7F8C]">
+                        {formatDate(r.finalized_at ?? r.created_at)}
+                      </p>
                     </td>
                     <td className="px-4 py-4 font-medium text-[#20232D]">
                       {r.client_id ? (
@@ -315,29 +419,49 @@ function ReceiptsListContent() {
                       ) : (
                         r.customer_name
                       )}
+                      {r.payment_method && (
+                        <p className="mt-0.5 text-[11px] text-[#7A7F8C]">{r.payment_method}</p>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       {r.verification_code ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(r.verification_code!);
-                            toast.success("Verification code copied");
-                          }}
-                          className="group inline-flex items-center gap-1.5 font-mono text-[12.5px] text-[#20232D] hover:text-[#5848D6]"
-                        >
-                          <span>{r.verification_code}</span>
-                          <Copy className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(r.verification_code!);
+                              toast.success("Verification code copied");
+                            }}
+                            className="group inline-flex items-center gap-1.5 font-mono text-[12.5px] font-semibold text-[#20232D] hover:text-[#5848D6]"
+                          >
+                            <span>{r.verification_code}</span>
+                            <Copy className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
+                          </button>
+                          <Link
+                            href={`/verify/${r.verification_code}`}
+                            title="Verify this receipt"
+                            className="rounded bg-[#EEECFC] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#5848D6] hover:bg-[#E0DCFA]"
+                          >
+                            Verify ↗
+                          </Link>
+                        </div>
                       ) : (
-                        <span className="text-[#7A7F8C]">Not issued yet</span>
+                        <span className="text-[12px] text-[#7A7F8C]">Draft (unissued)</span>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-[#4A4F5C]">
-                      {formatDate(r.finalized_at ?? r.created_at)}
+                    <td className="px-4 py-4 tabular">
+                      <p className="font-semibold text-[#20232D]">{formatMoney(totalNum, r.currency)}</p>
+                      <p className="mt-0.5 text-[11px] text-[#7A7F8C]">
+                        <span className="text-[#16794F]">{formatMoney(paidNum, r.currency)} paid</span>
+                        {dueNum > 0 && (
+                          <span className="ml-1.5 font-medium text-[#B4343B]">
+                            · {formatMoney(dueNum, r.currency)} due
+                          </span>
+                        )}
+                      </p>
                     </td>
-                    <td className="px-4 py-4 font-semibold tabular text-[#20232D]">
-                      {formatMoney(r.total, r.currency)}
+                    <td className="px-4 py-4">
+                      <PaymentStatusBadge status={r.payment_status ?? "paid"} full />
                     </td>
                     <td className="px-4 py-4">
                       {r.status === "finalized" ? (
@@ -455,7 +579,7 @@ function ReceiptsListContent() {
 
       {/* Bottom Security Note */}
       <p className="text-[12px] text-[#7A7F8C]">
-        Finalized receipts are locked. Use the action menu to reprint, download PDF, or duplicate as a new draft.
+        Finalized receipts are locked. Click &ldquo;Verify ↗&rdquo; on any row to open its live public verification page.
       </p>
     </div>
   );

@@ -5,6 +5,10 @@ export type PdfReceiptData = {
   receipt: {
     id: string;
     status: "draft" | "finalized" | "cancelled";
+    payment_status?: string;
+    amount_paid?: string | number;
+    balance_due?: string | number;
+    payment_method?: string;
     receipt_number: string | null;
     verification_code: string | null;
     customer_name: string;
@@ -176,6 +180,7 @@ export function generateReceiptPdf(data: PdfReceiptData): Buffer {
   const boxLines: [string, string][] = [["Customer:", r.customer_name]];
   if (r.customer_phone) boxLines.push(["Phone:", r.customer_phone]);
   if (r.customer_address) boxLines.push(["Address:", r.customer_address]);
+  boxLines.push(["Payment:", `${(r.payment_status || "paid").toUpperCase().replace("_", " ")} (${r.payment_method || "M-Pesa"})`]);
   boxLines.push(["Issued by:", r.issued_by_name ?? "-"]);
 
   const boxHeight = boxLines.length * 15 + 16;
@@ -218,11 +223,24 @@ export function generateReceiptPdf(data: PdfReceiptData): Buffer {
     y -= 15;
   }
 
-  // Total Footer
+  // Total / Paid / Balance Footer
   y -= 2;
-  drawText("Total", colPriceX - 20, y, { font: "F2", size: 11, align: "right" });
-  drawText(money(r.total, r.currency), colTotalX, y, { font: "F2", size: 12, color: [0.07, 0.22, 0.17], align: "right" });
-  y -= 26;
+  drawText("Total Amount", colPriceX - 20, y, { font: "F2", size: 10.5, align: "right" });
+  drawText(money(r.total, r.currency), colTotalX, y, { font: "F2", size: 11, color: [0.07, 0.22, 0.17], align: "right" });
+  y -= 16;
+
+  const paidAmt = r.amount_paid !== undefined ? r.amount_paid : r.total;
+  const dueAmt = r.balance_due !== undefined ? r.balance_due : 0;
+  drawText("Amount Paid", colPriceX - 20, y, { font: "F2", size: 10, color: [0.09, 0.47, 0.31], align: "right" });
+  drawText(money(paidAmt, r.currency), colTotalX, y, { font: "F2", size: 10.5, color: [0.09, 0.47, 0.31], align: "right" });
+  y -= 16;
+
+  if (Number(dueAmt) > 0) {
+    drawText("Balance Due", colPriceX - 20, y, { font: "F2", size: 10, color: [0.7, 0.2, 0.23], align: "right" });
+    drawText(money(dueAmt, r.currency), colTotalX, y, { font: "F2", size: 10.5, color: [0.7, 0.2, 0.23], align: "right" });
+    y -= 16;
+  }
+  y -= 10;
 
   // Notes
   if (r.notes) {

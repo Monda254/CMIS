@@ -5,24 +5,48 @@ import { VerifyResultCard } from "@/components/verify-result";
 import { checkReceipt, type VerifyResult } from "@/lib/verify";
 import { PublicNav } from "@/components/public-nav";
 
+const SAMPLE_RECEIPT_CHIPS: {
+  label: string;
+  code: string;
+  badgeClass: string;
+}[] = [
+  { label: "Paid in Full", code: "PAID2026KE", badgeClass: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  { label: "Half Paid", code: "HALF2026KE", badgeClass: "border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]" },
+  { label: "Not Paid", code: "UNPD2026KE", badgeClass: "border-[#F4DFB8] bg-[#FCF3E3] text-[#9A6316]" },
+  { label: "In Progress", code: "PROG2026KE", badgeClass: "border-[#BAE6FD] bg-[#E0F2FE] text-[#0369A1]" },
+  { label: "Failed", code: "FAIL2026KE", badgeClass: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  { label: "Overdue", code: "OVRD2026KE", badgeClass: "border-[#FECDD3] bg-[#FFF1F2] text-[#BE123C]" },
+  { label: "Refunded", code: "RFND2026KE", badgeClass: "border-[#E9D5FF] bg-[#F3E8FF] text-[#6B21A8]" },
+  { label: "Disputed", code: "DISP2026KE", badgeClass: "border-[#FED7AA] bg-[#FFEDD5] text-[#C2410C]" },
+  { label: "Cancelled", code: "CANC2026KE", badgeClass: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  { label: "Draft (Unfinalized)", code: "RCP-2026-DRAFT1", badgeClass: "border-[#F4DFB8] bg-[#FCF3E3] text-[#9A6316]" },
+  { label: "Not Our Receipt", code: "FAKE9999XX", badgeClass: "border-[#20232D] bg-[#20232D] text-white" },
+];
+
 export default function VerifyPage() {
   const [code, setCode] = useState("");
   const [res, setRes] = useState<VerifyResult | null>(null);
   const [busy, setBusy] = useState(false);
 
+  async function runVerify(targetCode: string) {
+    const clean = targetCode.trim().toUpperCase();
+    if (!clean || busy) return;
+    setCode(clean);
+    setBusy(true);
+    setRes(await checkReceipt(clean));
+    setBusy(false);
+  }
+
   async function check(e: React.FormEvent) {
     e.preventDefault();
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    setRes(await checkReceipt(code));
-    setBusy(false);
+    await runVerify(code);
   }
 
   return (
     <div className="flex min-h-dvh flex-col bg-[#F7F8FA]">
       <PublicNav companyName={typeof res?.["company"] === "string" ? res["company"] : undefined} />
 
-      <main className="mx-auto w-full max-w-[660px] flex-1 px-4 py-12 sm:px-6">
+      <main className="mx-auto w-full max-w-[700px] flex-1 px-4 py-12 sm:px-6">
         {/* Hero */}
         <div className="text-center">
           <p className="text-[11px] font-bold tracking-[0.08em] text-[#5848D6] uppercase">
@@ -32,7 +56,7 @@ export default function VerifyPage() {
             Is your receipt the real thing?
           </h1>
           <p className="mt-2 text-[14.5px] text-[#7A7F8C]">
-            Verify a receipt instantly. No account needed.
+            Verify any receipt instantly — see whether it is Paid, Half Paid, Not Paid, In Progress, Failed, Cancelled, or Not Our Receipt.
           </p>
         </div>
 
@@ -49,7 +73,7 @@ export default function VerifyPage() {
                 maxLength={40}
                 value={code}
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
-                placeholder="DTX7K9P2A5 or RCP-2026-000125"
+                placeholder="PAID2026KE or RCP-2026-000101"
                 className="h-11 flex-1 rounded-xl border border-[#E6E8EF] bg-white px-4 font-mono text-[14px] font-medium text-[#20232D] outline-none placeholder:font-sans placeholder:text-[#7A7F8C] focus:border-[#5848D6]"
               />
               <button
@@ -61,8 +85,24 @@ export default function VerifyPage() {
               </button>
             </div>
             <p className="mt-2.5 text-[11.5px] text-[#7A7F8C]">
-              You can find the code near the QR code on your receipt.
+              You can find the code near the QR code on your receipt, or click any sample receipt type below to test live verification:
             </p>
+
+            {/* Quick Sample Chips for All Receipt Types */}
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {SAMPLE_RECEIPT_CHIPS.map((sample) => (
+                <button
+                  key={sample.code}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => runVerify(sample.code)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11.5px] font-semibold transition-transform active:scale-95 disabled:opacity-50 ${sample.badgeClass}`}
+                >
+                  <span>{sample.label}</span>
+                  <span className="font-mono text-[10px] opacity-75">({sample.code})</span>
+                </button>
+              ))}
+            </div>
           </form>
         </div>
 

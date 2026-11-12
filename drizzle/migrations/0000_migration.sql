@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS "public"."receipts" (
   "notes" text NOT NULL DEFAULT '' CHECK (char_length("notes") <= 2000),
   "currency" text NOT NULL DEFAULT 'KES',
   "total" numeric(14, 2) NOT NULL DEFAULT 0 CHECK ("total" >= 0),
+  "payment_status" text NOT NULL DEFAULT 'paid',
+  "amount_paid" numeric(14, 2) NOT NULL DEFAULT 0 CHECK ("amount_paid" >= 0),
+  "balance_due" numeric(14, 2) NOT NULL DEFAULT 0 CHECK ("balance_due" >= 0),
+  "payment_method" text NOT NULL DEFAULT 'M-Pesa',
   "company_snapshot" jsonb,
   "created_by" uuid NOT NULL REFERENCES "public"."users"("id"),
   "issued_by" uuid REFERENCES "public"."users"("id"),
@@ -123,3 +127,14 @@ CREATE TABLE IF NOT EXISTS "public"."verify_attempts" (
 );
 CREATE INDEX IF NOT EXISTS "verify_attempts_client_key_idx" ON "public"."verify_attempts" ("client_key", "created_at");
 CREATE INDEX IF NOT EXISTS "verify_attempts_identifier_idx" ON "public"."verify_attempts" ("identifier", "created_at");
+
+-- Enable Row Level Security (RLS) on all public tables to prevent direct Data API exposure
+ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."sessions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."company_settings" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."clients" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."receipt_sequences" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."receipts" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."receipt_items" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."audit_logs" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."verify_attempts" ENABLE ROW LEVEL SECURITY;

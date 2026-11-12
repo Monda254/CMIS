@@ -72,8 +72,65 @@ export type SaveReceiptDraftInput = {
   customerPhone?: string;
   customerAddress?: string;
   notes?: string;
+  paymentStatus?: string;
+  amountPaid?: number | string | null;
+  paymentMethod?: string;
   items: DraftItemInput[];
 };
+
+const VALID_PAYMENT_STATUSES = new Set([
+  "paid",
+  "half_paid",
+  "unpaid",
+  "in_progress",
+  "failed",
+  "refunded",
+  "overdue",
+  "disputed",
+]);
+
+function computePaymentAmounts(
+  totalNum: number,
+  rawPaymentStatus?: string,
+  rawAmountPaid?: number | string | null,
+): { paymentStatus: string; amountPaidStr: string; balanceDueStr: string } {
+  const paymentStatus =
+    rawPaymentStatus && VALID_PAYMENT_STATUSES.has(rawPaymentStatus) ? rawPaymentStatus : "paid";
+
+  let amountPaidNum = 0;
+  if (paymentStatus === "paid") {
+    amountPaidNum = totalNum;
+  } else if (paymentStatus === "unpaid" || paymentStatus === "failed") {
+    amountPaidNum = 0;
+  } else if (paymentStatus === "half_paid") {
+    const parsed = rawAmountPaid != null && rawAmountPaid !== "" ? Number(rawAmountPaid) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0 && parsed < totalNum) {
+      amountPaidNum = Math.round(parsed * 100) / 100;
+    } else {
+      amountPaidNum = Math.round(totalNum * 50) / 100;
+    }
+  } else {
+    const parsed = rawAmountPaid != null && rawAmountPaid !== "" ? Number(rawAmountPaid) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      amountPaidNum = Math.min(totalNum, Math.round(parsed * 100) / 100);
+    } else if (paymentStatus === "refunded") {
+      amountPaidNum = 0;
+    } else {
+      amountPaidNum = 0;
+    }
+  }
+
+  const balanceDueNum =
+    paymentStatus === "refunded"
+      ? 0
+      : Math.max(0, Math.round((totalNum - amountPaidNum) * 100) / 100);
+
+  return {
+    paymentStatus,
+    amountPaidStr: amountPaidNum.toFixed(2),
+    balanceDueStr: balanceDueNum.toFixed(2),
+  };
+}
 
 /**
  * Authoritative server-side draft creation / update with strict money math.
@@ -128,6 +185,12 @@ export async function saveReceiptDraft(user: SessionUser, input: SaveReceiptDraf
 
   const totalNum = Math.round(normalizedItems.reduce((acc, it) => acc + it.lineTotalNum, 0) * 100) / 100;
   const totalStr = totalNum.toFixed(2);
+  const { paymentStatus, amountPaidStr, balanceDueStr } = computePaymentAmounts(
+    totalNum,
+    input.paymentStatus,
+    input.amountPaid,
+  );
+  const paymentMethod = (input.paymentMethod ?? "M-Pesa").trim().slice(0, 60) || "M-Pesa";
 
   return await db.transaction(async (tx) => {
     const settings = await ensureCompanySettings();
@@ -172,6 +235,10 @@ export async function saveReceiptDraft(user: SessionUser, input: SaveReceiptDraf
           notes,
           currency: settings.currency,
           total: totalStr,
+          paymentStatus,
+          amountPaid: amountPaidStr,
+          balanceDue: balanceDueStr,
+          paymentMethod,
           createdBy: user.id,
         })
         .returning({ id: schema.receipts.id });
@@ -199,6 +266,10 @@ export async function saveReceiptDraft(user: SessionUser, input: SaveReceiptDraf
           notes,
           currency: settings.currency,
           total: totalStr,
+          paymentStatus,
+          amountPaid: amountPaidStr,
+          balanceDue: balanceDueStr,
+          paymentMethod,
           updatedAt: new Date(),
         })
         .where(eq(schema.receipts.id, receiptId));
@@ -420,17 +491,25 @@ export async function verifyReceiptLimited(
   const [r] = await db
     .select()
     .from(schema.receipts)
-    .where(
-      and(
-        ne(schema.receipts.status, "draft"),
-        or(eq(schema.receipts.verificationCode, idf), eq(schema.receipts.receiptNumber, idf)),
-      ),
-    )
+    .where(or(eq(schema.receipts.verificationCode, idf), eq(schema.receipts.receiptNumber, idf)))
     .limit(1);
 
   let payload: Record<string, unknown>;
   if (!r) {
     payload = { result: "not_found" };
+  } else if (r.status === "draft") {
+    payload = {
+      result: "draft",
+      receipt_number: r.receiptNumber ?? "DRAFT",
+      customer: maskCustomerName(r.customerName),
+      total: Number(r.total),
+      amount_paid: Number(r.amountPaid ?? 0),
+      balance_due: Number(r.balanceDue ?? 0),
+      payment_status: r.paymentStatus ?? "in_progress",
+      payment_method: r.paymentMethod ?? "M-Pesa",
+      currency: r.currency,
+      company: r.companySnapshot?.name ?? "Northstar Studio",
+    };
   } else {
     const code = r.verificationCode ?? "";
     const codeHint = code.length >= 6 ? `${code.slice(0, 3)}****${code.slice(-3)}` : code;
@@ -441,9 +520,14 @@ export async function verifyReceiptLimited(
       customer: maskCustomerName(r.customerName),
       issued_at: r.finalizedAt ? r.finalizedAt.toISOString() : null,
       total: Number(r.total),
+      amount_paid: Number(r.amountPaid ?? r.total),
+      balance_due: Number(r.balanceDue ?? 0),
+      payment_status: r.paymentStatus ?? "paid",
+      payment_method: r.paymentMethod ?? "M-Pesa",
       currency: r.currency,
       company: r.companySnapshot?.name ?? "",
       cancelled_at: r.cancelledAt ? r.cancelledAt.toISOString() : null,
+      cancel_reason: r.cancelReason ?? null,
     };
   }
 
@@ -467,6 +551,9 @@ export async function duplicateReceiptAsDraft(user: SessionUser, sourceReceiptId
     customerPhone: detail.receipt.customer_phone,
     customerAddress: detail.receipt.customer_address,
     notes: detail.receipt.notes,
+    paymentStatus: detail.receipt.payment_status,
+    amountPaid: detail.receipt.amount_paid,
+    paymentMethod: detail.receipt.payment_method,
     items: detail.items.map((it) => ({
       description: it.description,
       quantity: Number(it.quantity),
@@ -589,7 +676,7 @@ export async function getDashboardStats(user: SessionUser) {
     }));
   }
 
-  const vRow = verifyAgg[0] ?? { total: 0, valid: 0, invalid: 0 };
+  const vRow = verifyAgg ?? { total: 0, valid: 0, invalid: 0 };
 
   return {
     currency: settings.currency,
@@ -645,6 +732,10 @@ export async function getReceiptsList(filters: { client?: string | null; status?
       client_id: schema.receipts.clientId,
       customer_name: schema.receipts.customerName,
       total: schema.receipts.total,
+      payment_status: schema.receipts.paymentStatus,
+      amount_paid: schema.receipts.amountPaid,
+      balance_due: schema.receipts.balanceDue,
+      payment_method: schema.receipts.paymentMethod,
       currency: schema.receipts.currency,
       finalized_at: schema.receipts.finalizedAt,
       created_at: schema.receipts.createdAt,
@@ -665,6 +756,10 @@ export async function getReceiptsList(filters: { client?: string | null; status?
     client_id: r.client_id,
     customer_name: r.customer_name,
     total: r.total,
+    payment_status: r.payment_status,
+    amount_paid: r.amount_paid,
+    balance_due: r.balance_due,
+    payment_method: r.payment_method,
     currency: r.currency,
     finalized_at: r.finalized_at ? r.finalized_at.toISOString() : null,
     created_at: r.created_at.toISOString(),
@@ -701,6 +796,10 @@ export async function getReceiptDetail(receiptId: string) {
       notes: r.notes,
       currency: r.currency,
       total: r.total,
+      payment_status: r.paymentStatus,
+      amount_paid: r.amountPaid,
+      balance_due: r.balanceDue,
+      payment_method: r.paymentMethod,
       company_snapshot: r.companySnapshot,
       created_at: r.createdAt.toISOString(),
       updated_at: r.updatedAt.toISOString(),

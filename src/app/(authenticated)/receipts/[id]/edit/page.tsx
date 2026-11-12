@@ -5,11 +5,15 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-client";
 import { ReceiptForm, type ItemRow } from "@/components/receipt-form";
+import type { PaymentStatus } from "@/components/status-badge";
 
 type ReceiptDetailResponse = {
   receipt: {
     id: string;
     status: "draft" | "finalized" | "cancelled";
+    payment_status?: PaymentStatus;
+    amount_paid?: string | number;
+    payment_method?: string;
     client_id: string;
     customer_name: string;
     customer_phone: string;
@@ -59,6 +63,9 @@ export default function EditReceiptPage({ params }: { params: Promise<{ id: stri
         customer_name: r.customer_name,
         customer_phone: r.customer_phone,
         customer_address: r.customer_address,
+        payment_status: r.payment_status,
+        amount_paid: r.amount_paid,
+        payment_method: r.payment_method,
         notes: r.notes,
         items: q.data!.items.map((it) => ({
           description: it.description,

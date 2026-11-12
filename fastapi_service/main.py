@@ -28,7 +28,9 @@ pool: Optional[asyncpg.Pool] = None
 async def lifespan(_app: FastAPI):
     global pool
     if DATABASE_URL:
-        pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=12)
+        pool = await asyncpg.create_pool(
+            DATABASE_URL, min_size=2, max_size=12, statement_cache_size=0
+        )
     yield
     if pool:
         await pool.close()
@@ -224,6 +226,10 @@ async def list_receipts(
               r.client_id::text,
               r.customer_name,
               r.total::text,
+              r.payment_status,
+              r.amount_paid::text,
+              r.balance_due::text,
+              r.payment_method,
               r.currency,
               r.finalized_at,
               r.created_at,
@@ -246,6 +252,10 @@ async def list_receipts(
                 "client_id": r["client_id"],
                 "customer_name": r["customer_name"],
                 "total": r["total"],
+                "payment_status": r["payment_status"] or "paid",
+                "amount_paid": r["amount_paid"] or r["total"],
+                "balance_due": r["balance_due"] or "0.00",
+                "payment_method": r["payment_method"] or "M-Pesa",
                 "currency": r["currency"],
                 "finalized_at": r["finalized_at"].isoformat() if r["finalized_at"] else None,
                 "created_at": r["created_at"].isoformat(),

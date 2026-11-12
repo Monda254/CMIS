@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { useMe } from "@/lib/auth";
 import { formatDate, formatMoney } from "@/lib/format";
+import { PaymentStatusBadge, type PaymentStatus } from "@/components/status-badge";
 
 type Stats = {
   currency: string;
@@ -54,6 +55,9 @@ type RecentReceipt = {
   verification_code?: string | null;
   client_id?: string | null;
   status: "draft" | "finalized" | "cancelled";
+  payment_status?: PaymentStatus;
+  amount_paid?: string | number;
+  balance_due?: string | number;
   customer_name: string;
   total: string | number;
   currency: string;
@@ -72,6 +76,9 @@ export default function DashboardPage() {
     receipt_number?: string;
     customer?: string;
     total?: number;
+    payment_status?: string;
+    amount_paid?: number;
+    balance_due?: number;
     currency?: string;
   } | null>(null);
 
@@ -87,7 +94,7 @@ export default function DashboardPage() {
   const recent = useQuery({
     queryKey: ["recent-receipts"],
     queryFn: async () => {
-      const res = await fetch("/api/receipts?limit=8", { credentials: "include" });
+      const res = await fetch("/api/receipts?limit=12", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load recent receipts");
       return (await res.json()) as RecentReceipt[];
     },
@@ -172,7 +179,6 @@ export default function DashboardPage() {
 
       {/* 4 KPI Cards Row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Card 1: Total Revenue */}
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
           <p className="text-[12.5px] font-medium text-[#7A7F8C]">Total revenue</p>
           <p className="mt-2.5 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
@@ -188,7 +194,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 2: Receipts Issued */}
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
           <p className="text-[12.5px] font-medium text-[#7A7F8C]">Receipts issued</p>
           <p className="mt-2.5 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
@@ -202,7 +207,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 3: Total Clients */}
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
           <p className="text-[12.5px] font-medium text-[#7A7F8C]">Total clients</p>
           <p className="mt-2.5 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
@@ -216,7 +220,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Card 4: Today's Revenue */}
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">
           <p className="text-[12.5px] font-medium text-[#7A7F8C]">Today&apos;s revenue</p>
           <p className="mt-2.5 font-display text-[26px] font-bold tracking-tight tabular text-[#20232D]">
@@ -235,7 +238,6 @@ export default function DashboardPage() {
 
       {/* Middle Section: Revenue Overview Chart (8 cols) + Trust Card (4 cols) */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* Revenue Overview Bar Chart */}
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-6 lg:col-span-8">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -323,7 +325,7 @@ export default function DashboardPage() {
               A receipt they can trust.
             </h2>
             <p className="mt-2 text-[13px] leading-relaxed text-[#5E6373]">
-              Every finalized receipt gets a unique code and QR verification. No second guessing.
+              Every receipt type — Paid, Half Paid, Not Paid, In Progress, Failed, Overdue, Refunded, Disputed, Cancelled, or Not Our Receipt — is verifiable in real time.
             </p>
           </div>
 
@@ -338,7 +340,7 @@ export default function DashboardPage() {
                 href="/verify"
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-white px-4 text-[13px] font-semibold text-[#20232D] shadow-2xs transition-colors hover:bg-white/90"
               >
-                Verify a receipt
+                Verify all receipt types
                 <ArrowUpRight className="h-3.5 w-3.5 text-[#5848D6]" />
               </Link>
             </div>
@@ -346,7 +348,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Executive Verification Banner & Telemetry Stream (Shown in Executive Mode) */}
+      {/* Executive Verification Banner & Telemetry Stream */}
       {viewMode === "executive" && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
           <div className="relative overflow-hidden rounded-xl bg-[#091426] p-6 text-white lg:col-span-8">
@@ -369,7 +371,7 @@ export default function DashboardPage() {
                   type="text"
                   value={quickCode}
                   onChange={(e) => setQuickCode(e.target.value.toUpperCase())}
-                  placeholder="Enter code (e.g. DTX7K9P2A5)..."
+                  placeholder="Enter code (e.g. PAID2026KE)..."
                   className="h-10 flex-1 rounded-lg border border-white/15 bg-white/10 px-3.5 font-mono text-[12.5px] text-white placeholder:text-slate-400 outline-none focus:border-[#5848D6]"
                 />
                 <button
@@ -385,15 +387,18 @@ export default function DashboardPage() {
             {quickResult && (
               <div className="mt-4 flex items-center justify-between rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 text-[12.5px]">
                 {quickResult.result === "valid" ? (
-                  <span className="flex items-center gap-2 text-[#34D399]">
+                  <span className="flex flex-wrap items-center gap-2 text-[#34D399]">
                     <CheckCircle2 className="h-4 w-4" />
                     Authentic: <strong>{quickResult.receipt_number}</strong> · {quickResult.customer} ·{" "}
-                    {formatMoney(quickResult.total ?? 0, quickResult.currency)}
+                    {formatMoney(quickResult.total ?? 0, quickResult.currency)} · Status:{" "}
+                    <strong className="uppercase">{quickResult.payment_status || "paid"}</strong>
                   </span>
                 ) : (
                   <span className="flex items-center gap-2 text-rose-300">
                     <ShieldAlert className="h-4 w-4" />
-                    Status: {quickResult.result} — No active finalized receipt matched that code.
+                    {quickResult.result === "not_found" || quickResult.result === "invalid"
+                      ? "NOT OUR RECEIPT — Unrecognized code or number."
+                      : `Status: ${quickResult.result.toUpperCase()} (${quickResult.receipt_number ?? ""})`}
                   </span>
                 )}
                 <button
@@ -435,7 +440,7 @@ export default function DashboardPage() {
                           : "bg-[#FCECEE] text-[#B4343B]"
                       }`}
                     >
-                      {v.result === "valid" ? "Valid" : "Invalid"}
+                      {v.result === "valid" ? "Valid" : v.result === "not_found" ? "Not Ours" : v.result}
                     </span>
                   </div>
                 ))
@@ -447,13 +452,12 @@ export default function DashboardPage() {
 
       {/* Bottom Section: Recent Receipts (8 cols) + Recent Clients (4 cols) */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* Recent Receipts Table */}
         <div className="overflow-hidden rounded-xl border border-[#E6E8EF] bg-white lg:col-span-8">
           <div className="flex items-center justify-between px-6 py-5">
             <div>
-              <h2 className="font-display text-[16px] font-bold text-[#20232D]">Recent receipts</h2>
+              <h2 className="font-display text-[16px] font-bold text-[#20232D]">Recent receipts (all types)</h2>
               <p className="mt-0.5 text-[12.5px] text-[#7A7F8C]">
-                The latest activity across your workspace.
+                The latest receipts across Paid, Half Paid, Not Paid, In Progress, Failed, Overdue, Refunded, Disputed, Cancelled, and Drafts.
               </p>
             </div>
             <Link
@@ -471,12 +475,12 @@ export default function DashboardPage() {
                   <th className="px-6 py-3">Receipt / Client</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Payment / Doc Status</th>
                   <th className="px-6 py-3 text-right"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E6E8EF] text-[13px]">
-                {(recent.data ?? []).slice(0, 6).map((r) => {
+                {(recent.data ?? []).slice(0, 10).map((r) => {
                   const href = r.status === "draft" ? `/receipts/${r.id}/edit` : `/receipts/${r.id}`;
                   return (
                     <tr key={r.id} className="transition-colors hover:bg-[#F7F8FA]/60">
@@ -484,7 +488,7 @@ export default function DashboardPage() {
                         <Link href={href} className="font-medium text-[#5848D6] hover:underline">
                           {r.receipt_number ?? "Draft"} · {r.customer_name}
                         </Link>
-                        {viewMode === "executive" && r.verification_code && (
+                        {r.verification_code && (
                           <button
                             type="button"
                             onClick={() => {
@@ -505,19 +509,19 @@ export default function DashboardPage() {
                         {formatMoney(r.total, r.currency)}
                       </td>
                       <td className="px-4 py-4">
-                        {r.status === "finalized" ? (
-                          <span className="inline-flex items-center rounded-md bg-[#E8F6EE] px-2.5 py-1 text-[11.5px] font-semibold text-[#16794F]">
-                            Finalized
-                          </span>
-                        ) : r.status === "draft" ? (
-                          <span className="inline-flex items-center rounded-md bg-[#FCF3E3] px-2.5 py-1 text-[11.5px] font-semibold text-[#9A6316]">
-                            Draft
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-md bg-[#FCECEE] px-2.5 py-1 text-[11.5px] font-semibold text-[#B4343B]">
-                            Cancelled
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <PaymentStatusBadge status={r.payment_status ?? "paid"} />
+                          {r.status === "draft" && (
+                            <span className="inline-flex items-center rounded-md bg-[#FCF3E3] px-2 py-0.5 text-[11px] font-semibold text-[#9A6316]">
+                              Draft
+                            </span>
+                          )}
+                          {r.status === "cancelled" && (
+                            <span className="inline-flex items-center rounded-md bg-[#FCECEE] px-2 py-0.5 text-[11px] font-semibold text-[#B4343B]">
+                              Cancelled
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="inline-flex items-center gap-1">
@@ -571,7 +575,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-4 divide-y divide-[#E6E8EF]">
-            {(stats.data?.recent_clients ?? []).slice(0, 5).map((client) => (
+            {(stats.data?.recent_clients ?? []).slice(0, 6).map((client) => (
               <Link
                 key={client.id}
                 href={`/clients/${client.id}`}

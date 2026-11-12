@@ -10,16 +10,19 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const client = searchParams.get("client");
     const status = searchParams.get("status");
+    const limitParam = searchParams.get("limit");
+    const limit = limitParam ? Number(limitParam) : undefined;
 
     const qs = new URLSearchParams();
     if (client) qs.set("client", client);
     if (status) qs.set("status", status);
+    if (limit) qs.set("limit", String(limit));
 
     const fastRows = await fetchFromFastApi<unknown[]>(
       `/api/v1/receipts${qs.toString() ? `?${qs.toString()}` : ""}`,
       user,
     );
-    const rows = fastRows ?? (await getReceiptsList({ client, status }));
+    const rows = fastRows ?? (await getReceiptsList({ client, status, limit }));
     return NextResponse.json(rows);
   } catch (err) {
     return handleApiError(err);
@@ -36,6 +39,9 @@ export async function POST(request: Request) {
       customerPhone?: string;
       customerAddress?: string;
       notes?: string;
+      paymentStatus?: string;
+      amountPaid?: number | string | null;
+      paymentMethod?: string;
       items?: DraftItemInput[];
       issue?: boolean;
     };
@@ -47,6 +53,9 @@ export async function POST(request: Request) {
       customerPhone: body.customerPhone ?? "",
       customerAddress: body.customerAddress ?? "",
       notes: body.notes ?? "",
+      paymentStatus: body.paymentStatus,
+      amountPaid: body.amountPaid,
+      paymentMethod: body.paymentMethod,
       items: body.items ?? [],
     });
 

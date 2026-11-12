@@ -13,6 +13,8 @@ dist
 .storage
 .env
 *.local
+*.tsbuildinfo
+next-env.d.ts
 
 # Python / FastAPI
 __pycache__/

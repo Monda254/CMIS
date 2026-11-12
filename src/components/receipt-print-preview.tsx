@@ -19,11 +19,16 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api-client";
 import { useMe } from "@/lib/auth";
 import { BrandingImg } from "@/components/branding-img";
+import { PaymentStatusBadge, getPaymentStatusMeta, type PaymentStatus } from "@/components/status-badge";
 import { dateTime, errMsg, formatMoney } from "@/lib/format";
 
 type Receipt = {
   id: string;
   status: "draft" | "finalized" | "cancelled";
+  payment_status?: PaymentStatus;
+  amount_paid?: string | number;
+  balance_due?: string | number;
+  payment_method?: string;
   receipt_number: string | null;
   verification_code: string | null;
   client_id: string;
@@ -384,7 +389,8 @@ export function ReceiptPrintPreview({ id }: { id: string }) {
                     {dateTime(r.finalized_at ?? r.created_at)}
                   </p>
                 </div>
-                <div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <PaymentStatusBadge status={r.payment_status ?? "paid"} full />
                   {r.status === "finalized" ? (
                     <span className="inline-flex items-center rounded-md bg-[#E8F6EE] px-2.5 py-0.5 text-[11px] font-semibold text-[#16794F]">
                       Finalized
@@ -399,6 +405,9 @@ export function ReceiptPrintPreview({ id }: { id: string }) {
                     </span>
                   )}
                 </div>
+                {r.payment_method && (
+                  <p className="text-[11px] text-[#7A7F8C]">Method: {r.payment_method}</p>
+                )}
               </div>
             </section>
 
@@ -441,15 +450,40 @@ export function ReceiptPrintPreview({ id }: { id: string }) {
                 </p>
               </div>
 
-              <div className="text-right">
-                <div className="flex items-baseline gap-4">
-                  <span className="text-[11px] font-bold tracking-[0.06em] text-[#20232D] uppercase">
-                    Total Paid
+              <div className="space-y-1.5 text-right">
+                <div className="flex items-baseline justify-end gap-4">
+                  <span className="text-[11px] font-bold tracking-[0.06em] text-[#7A7F8C] uppercase">
+                    Receipt Total
                   </span>
-                  <span className="font-display text-[22px] font-extrabold tabular text-[#5848D6]">
+                  <span className="font-display text-[18px] font-bold tabular text-[#20232D]">
                     {formatMoney(r.total, r.currency)}
                   </span>
                 </div>
+                <div className="flex items-baseline justify-end gap-4">
+                  <span className="text-[11px] font-bold tracking-[0.06em] text-[#16794F] uppercase">
+                    Amount Paid
+                  </span>
+                  <span className="font-display text-[22px] font-extrabold tabular text-[#5848D6]">
+                    {formatMoney(
+                      r.amount_paid !== undefined && r.amount_paid !== null
+                        ? r.amount_paid
+                        : (r.payment_status ?? "paid") === "paid"
+                          ? r.total
+                          : 0,
+                      r.currency,
+                    )}
+                  </span>
+                </div>
+                {Number(r.balance_due ?? 0) > 0 && (
+                  <div className="flex items-baseline justify-end gap-4">
+                    <span className="text-[11px] font-bold tracking-[0.06em] text-[#B4343B] uppercase">
+                      Balance Due
+                    </span>
+                    <span className="font-display text-[16px] font-bold tabular text-[#B4343B]">
+                      {formatMoney(r.balance_due ?? 0, r.currency)}
+                    </span>
+                  </div>
+                )}
                 <p className="mt-0.5 text-[10px] font-medium text-[#7A7F8C] uppercase">{r.currency}</p>
               </div>
             </div>
@@ -468,8 +502,8 @@ export function ReceiptPrintPreview({ id }: { id: string }) {
                     <span className="text-[7.5px] font-bold tracking-wider text-[#6356D8] uppercase">
                       {(snap.name || "NORTHSTAR").split(" ")[0]}
                     </span>
-                    <span className="mt-0.5 font-display text-[13px] font-extrabold text-[#6356D8]">
-                      PAID
+                    <span className="mt-0.5 px-1 font-display text-[10.5px] font-extrabold leading-tight text-[#6356D8] uppercase">
+                      {getPaymentStatusMeta(r.payment_status).label}
                     </span>
                   </div>
                 )}

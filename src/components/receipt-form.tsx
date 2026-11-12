@@ -6,6 +6,11 @@ import { useRouter } from "next/navigation";
 import { Check, Eye, Plus, X } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
 import { errMsg, formatMoney, previewLineTotal } from "@/lib/format";
+import {
+  PAYMENT_STATUS_OPTIONS,
+  PaymentStatusBadge,
+  type PaymentStatus,
+} from "@/components/status-badge";
 
 export type ItemRow = { description: string; quantity: string; unit_price: string };
 
@@ -16,6 +21,9 @@ type Props = {
     customer_name: string;
     customer_phone: string;
     customer_address: string;
+    payment_status?: PaymentStatus;
+    amount_paid?: string | number;
+    payment_method?: string;
     notes: string;
     items: ItemRow[];
   };
@@ -25,6 +33,15 @@ const QTY_RE = /^\d+(\.\d{1,3})?$/;
 const PRICE_RE = /^\d+(\.\d{1,2})?$/;
 const NEW_CLIENT = "__new__";
 
+const PAYMENT_METHODS = [
+  "M-Pesa",
+  "Bank Transfer (EFT / RTGS)",
+  "Cash",
+  "Card / POS",
+  "Cheque",
+  "Pending / Not Yet Paid",
+];
+
 export function ReceiptForm({ receiptId, initial }: Props) {
   const router = useRouter();
   const qc = useQueryClient();
@@ -32,6 +49,15 @@ export function ReceiptForm({ receiptId, initial }: Props) {
   const [customerName, setCustomerName] = useState(initial?.customer_name ?? "");
   const [customerPhone, setCustomerPhone] = useState(initial?.customer_phone ?? "");
   const [customerAddress, setCustomerAddress] = useState(initial?.customer_address ?? "");
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(
+    initial?.payment_status ?? "paid",
+  );
+  const [customAmountPaid, setCustomAmountPaid] = useState<string>(
+    initial?.amount_paid !== undefined ? String(initial.amount_paid) : "",
+  );
+  const [paymentMethod, setPaymentMethod] = useState<string>(
+    initial?.payment_method || "M-Pesa",
+  );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [items, setItems] = useState<ItemRow[]>(
     initial?.items?.length ? initial.items : [{ description: "", quantity: "1", unit_price: "" }],
@@ -77,8 +103,48 @@ export function ReceiptForm({ receiptId, initial }: Props) {
     return sum + (Number.isFinite(q) && q > 0 ? q : 0);
   }, 0);
 
+  // Compute preview Amount Paid and Balance Due matching server rules
+  const allowsCustomPaid =
+    paymentStatus === "half_paid" ||
+    paymentStatus === "in_progress" ||
+    paymentStatus === "overdue" ||
+    paymentStatus === "disputed";
+
+  const previewAmountPaid = (() => {
+    if (paymentStatus === "paid") return previewTotal;
+    if (paymentStatus === "unpaid" || paymentStatus === "failed" || paymentStatus === "refunded") {
+      return 0;
+    }
+    const parsed = Number(customAmountPaid);
+    if (customAmountPaid.trim() !== "" && Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(previewTotal, parsed);
+    }
+    if (paymentStatus === "half_paid") {
+      return Math.round(previewTotal * 50) / 100;
+    }
+    return 0;
+  })();
+
+  const previewBalanceDue =
+    paymentStatus === "refunded" ? 0 : Math.max(0, previewTotal - previewAmountPaid);
+
   function setItem(i: number, patch: Partial<ItemRow>) {
     setItems((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  function handleSelectPaymentStatus(nextStatus: PaymentStatus) {
+    setPaymentStatus(nextStatus);
+    if (nextStatus === "half_paid" && !customAmountPaid && previewTotal > 0) {
+      setCustomAmountPaid((previewTotal / 2).toFixed(2));
+    } else if (nextStatus === "unpaid" || nextStatus === "failed") {
+      setCustomAmountPaid("0");
+      setPaymentMethod("Pending / Not Yet Paid");
+    } else if (nextStatus === "paid") {
+      setCustomAmountPaid(previewTotal > 0 ? previewTotal.toFixed(2) : "");
+      if (paymentMethod === "Pending / Not Yet Paid") {
+        setPaymentMethod("M-Pesa");
+      }
+    }
   }
 
   function validate(): string | null {
@@ -115,6 +181,9 @@ export function ReceiptForm({ receiptId, initial }: Props) {
           customerName: customerName.trim(),
           customerPhone: customerPhone.trim(),
           customerAddress: customerAddress.trim(),
+          paymentStatus,
+          amountPaid: previewAmountPaid,
+          paymentMethod,
           notes: notes.trim(),
           items: items.map((it) => ({
             description: it.description.trim(),
@@ -137,14 +206,14 @@ export function ReceiptForm({ receiptId, initial }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Top Header Row matching 03 · Create receipt.svg */}
+      {/* Top Header Row */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-[28px] font-bold tracking-tight text-[#20232D]">
             {receiptId ? "Edit receipt" : "Create receipt"}
           </h1>
           <p className="mt-0.5 text-[14px] text-[#7A7F8C]">
-            Create a professional receipt in just a few steps.
+            Create a professional receipt for Paid, Half Paid, Unpaid, In Progress, Failed, or any payment state.
           </p>
         </div>
 
@@ -196,7 +265,7 @@ export function ReceiptForm({ receiptId, initial }: Props) {
           <div>
             <div className="flex items-center justify-between">
               <h2 className="font-display text-[16px] font-bold text-[#20232D]">Receipt details</h2>
-              <span className="text-[11px] font-bold tracking-wider text-[#9A6316] uppercase">Draft</span>
+              <PaymentStatusBadge status={paymentStatus} full />
             </div>
 
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -227,7 +296,95 @@ export function ReceiptForm({ receiptId, initial }: Props) {
 
           <hr className="border-[#E6E8EF]" />
 
-          {/* Section 2: Client Information */}
+          {/* Section 2: Payment Status & Type */}
+          <div>
+            <h2 className="font-display text-[16px] font-bold text-[#20232D]">Receipt &amp; payment type</h2>
+            <p className="mt-0.5 text-[12.5px] text-[#7A7F8C]">
+              Select the exact payment state of this receipt (Paid, Half Paid, Not Paid, In Progress, Failed, Overdue, Refunded, or Disputed).
+            </p>
+
+            <div className="mt-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              {PAYMENT_STATUS_OPTIONS.map((opt) => {
+                const active = paymentStatus === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => handleSelectPaymentStatus(opt.value)}
+                    className={`flex flex-col items-start rounded-xl border p-3 text-left transition-all ${
+                      active
+                        ? "border-[#5848D6] bg-[#EEECFC]/70 ring-1 ring-[#5848D6]"
+                        : "border-[#E6E8EF] bg-white hover:bg-[#F7F8FA]"
+                    }`}
+                  >
+                    <PaymentStatusBadge status={opt.value} />
+                    <span className="mt-1.5 text-[11px] leading-snug text-[#4A4F5C]">
+                      {opt.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-[12px] font-semibold text-[#20232D]">Payment method</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  aria-label="Payment method"
+                  className="mt-1.5 h-10 w-full rounded-lg border border-[#E6E8EF] bg-white px-3 text-[13px] font-medium text-[#20232D] outline-none focus:border-[#5848D6]"
+                >
+                  {PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-semibold text-[#20232D]">
+                  Amount paid ({currency})
+                </label>
+                {allowsCustomPaid ? (
+                  <div className="mt-1.5 flex gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={customAmountPaid}
+                      onChange={(e) => setCustomAmountPaid(e.target.value)}
+                      placeholder={
+                        paymentStatus === "half_paid"
+                          ? (previewTotal / 2).toFixed(2)
+                          : "0.00"
+                      }
+                      className="h-10 flex-1 rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] tabular text-[#20232D] outline-none focus:border-[#5848D6]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setCustomAmountPaid((previewTotal / 2).toFixed(2))}
+                      className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 text-[11.5px] font-semibold text-[#5848D6] hover:bg-[#EEECFC]"
+                    >
+                      50%
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    readOnly
+                    value={formatMoney(previewAmountPaid, currency)}
+                    className="mt-1.5 h-10 w-full rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3.5 text-[13px] font-semibold tabular text-[#20232D] outline-none"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          <hr className="border-[#E6E8EF]" />
+
+          {/* Section 3: Client Information */}
           <div>
             <h2 className="font-display text-[16px] font-bold text-[#20232D]">Client information</h2>
             <p className="mt-0.5 text-[12.5px] text-[#7A7F8C]">
@@ -280,7 +437,7 @@ export function ReceiptForm({ receiptId, initial }: Props) {
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
                   maxLength={40}
-                  placeholder="+1 (212) 555-0148"
+                  placeholder="+254 712 345 678"
                   className="mt-1.5 h-10 w-full rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] text-[#20232D] outline-none placeholder:text-[#7A7F8C] focus:border-[#5848D6]"
                 />
               </div>
@@ -292,7 +449,7 @@ export function ReceiptForm({ receiptId, initial }: Props) {
                   value={customerAddress}
                   onChange={(e) => setCustomerAddress(e.target.value)}
                   maxLength={500}
-                  placeholder="128 Crosby Street, New York, NY 10012"
+                  placeholder="Westlands Commercial Centre, Nairobi"
                   className="mt-1.5 h-10 w-full rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] text-[#20232D] outline-none placeholder:text-[#7A7F8C] focus:border-[#5848D6]"
                 />
               </div>
@@ -308,7 +465,7 @@ export function ReceiptForm({ receiptId, initial }: Props) {
 
           <hr className="border-[#E6E8EF]" />
 
-          {/* Section 3: Services / Products */}
+          {/* Section 4: Services / Products */}
           <div>
             <h2 className="font-display text-[16px] font-bold text-[#20232D]">Services / products</h2>
 
@@ -400,17 +557,38 @@ export function ReceiptForm({ receiptId, initial }: Props) {
         <div className="space-y-5 lg:col-span-4">
           {/* Receipt Summary Card */}
           <div className="rounded-xl border border-[#E6E8EF] bg-white p-6">
-            <h2 className="font-display text-[16px] font-bold text-[#20232D]">Receipt summary</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-[16px] font-bold text-[#20232D]">Receipt summary</h2>
+              <PaymentStatusBadge status={paymentStatus} />
+            </div>
             <p className="mt-0.5 text-[12px] text-[#7A7F8C]">
               {items.length} line item{items.length === 1 ? "" : "s"} · {totalUnits} unit
               {totalUnits === 1 ? "" : "s"}
             </p>
 
-            <div className="mt-5 flex items-center justify-between border-b border-[#E6E8EF] pb-4 text-[13px]">
-              <span className="text-[#7A7F8C]">Subtotal</span>
-              <span className="font-semibold tabular text-[#20232D]">
-                {formatMoney(previewTotal, currency)}
-              </span>
+            <div className="mt-5 space-y-2.5 border-b border-[#E6E8EF] pb-4 text-[13px]">
+              <div className="flex items-center justify-between">
+                <span className="text-[#7A7F8C]">Total receipt amount</span>
+                <span className="font-semibold tabular text-[#20232D]">
+                  {formatMoney(previewTotal, currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#7A7F8C]">Amount paid</span>
+                <span className="font-semibold tabular text-[#16794F]">
+                  {formatMoney(previewAmountPaid, currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#7A7F8C]">Balance due</span>
+                <span
+                  className={`font-semibold tabular ${
+                    previewBalanceDue > 0 ? "text-[#B4343B]" : "text-[#20232D]"
+                  }`}
+                >
+                  {formatMoney(previewBalanceDue, currency)}
+                </span>
+              </div>
             </div>
 
             <div className="mt-5">
@@ -419,7 +597,7 @@ export function ReceiptForm({ receiptId, initial }: Props) {
                 {formatMoney(previewTotal, currency)}
               </p>
               <p className="mt-1 text-[11.5px] text-[#7A7F8C]">
-                {currency} · automatically calculated
+                {currency} · {paymentMethod}
               </p>
             </div>
 
@@ -440,22 +618,13 @@ export function ReceiptForm({ receiptId, initial }: Props) {
               A unique verification code and QR code are generated when you finalize.
             </p>
             <p className="mt-2.5 text-[12.5px] leading-relaxed text-[#5E6373]">
-              Finalized receipts are locked to protect their authenticity.
+              When verified on <code>/verify</code>, the exact payment status (Paid, Half Paid, Not Paid, In Progress, Failed, etc.) is shown.
             </p>
-          </div>
-
-          {/* Not quite ready Card */}
-          <div className="rounded-xl border border-[#E6E8EF] bg-white p-6">
-            <h3 className="font-display text-[15px] font-bold text-[#20232D]">Not quite ready?</h3>
-            <p className="mt-2 text-[12.5px] leading-relaxed text-[#7A7F8C]">
-              Save a draft and come back later. Draft receipts cannot be verified or used as proof of payment.
-            </p>
-            <p className="mt-4 text-[11.5px] text-[#7A7F8C]">Your work stays in your workspace.</p>
           </div>
         </div>
       </div>
 
-      {/* Optional Live A4 Document Preview (from Stitch DESIGN.md Dual-Pane Studio) */}
+      {/* Optional Live A4 Document Preview */}
       {showLiveSheet && (
         <div className="rounded-2xl border border-[#E6E8EF] bg-[#EAECF2] p-6 sm:p-10">
           <div className="mx-auto max-w-[680px] rounded-sm bg-white p-8 shadow-md sm:p-12">
@@ -465,20 +634,20 @@ export function ReceiptForm({ receiptId, initial }: Props) {
                   {settings.data?.name || "NORTHSTAR STUDIO"}
                 </p>
                 <p className="mt-2 text-[11.5px] text-[#7A7F8C]">
-                  {settings.data?.address || "18 W 27th Street, New York, NY 10001"}
+                  {settings.data?.address || "Westlands Commercial Centre, Nairobi"}
                 </p>
                 <p className="text-[11.5px] text-[#7A7F8C]">
                   {[settings.data?.phone, settings.data?.email].filter(Boolean).join(" · ") ||
-                    "+1 (212) 555-0100 · hello@northstar.example"}
+                    "+254 700 123 456 · billing@ledgerly.co.ke"}
                 </p>
               </div>
               <div className="text-right">
                 <p className="font-display text-[20px] font-extrabold tracking-wide text-[#5848D6]">
                   RECEIPT
                 </p>
-                <p className="text-[10px] font-semibold tracking-wider text-[#7A7F8C] uppercase">
-                  DRAFT PREVIEW
-                </p>
+                <div className="mt-1">
+                  <PaymentStatusBadge status={paymentStatus} full />
+                </div>
               </div>
             </div>
 
@@ -533,16 +702,33 @@ export function ReceiptForm({ receiptId, initial }: Props) {
                   {notes || "Thank you for your business."}
                 </p>
               </div>
-              <div className="text-right">
-                <div className="flex items-baseline gap-4">
-                  <span className="text-[11px] font-bold tracking-wider text-[#20232D] uppercase">
-                    Total Paid
+              <div className="space-y-1.5 text-right">
+                <div className="flex items-baseline justify-end gap-4">
+                  <span className="text-[11px] font-bold tracking-wider text-[#7A7F8C] uppercase">
+                    Total
                   </span>
-                  <span className="font-display text-[22px] font-extrabold tabular text-[#5848D6]">
+                  <span className="font-display text-[18px] font-bold tabular text-[#20232D]">
                     {formatMoney(previewTotal, currency)}
                   </span>
                 </div>
-                <p className="text-[10px] text-[#7A7F8C]">{currency}</p>
+                <div className="flex items-baseline justify-end gap-4">
+                  <span className="text-[11px] font-bold tracking-wider text-[#16794F] uppercase">
+                    Amount Paid
+                  </span>
+                  <span className="font-display text-[20px] font-extrabold tabular text-[#16794F]">
+                    {formatMoney(previewAmountPaid, currency)}
+                  </span>
+                </div>
+                {previewBalanceDue > 0 && (
+                  <div className="flex items-baseline justify-end gap-4">
+                    <span className="text-[11px] font-bold tracking-wider text-[#B4343B] uppercase">
+                      Balance Due
+                    </span>
+                    <span className="font-display text-[16px] font-bold tabular text-[#B4343B]">
+                      {formatMoney(previewBalanceDue, currency)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
