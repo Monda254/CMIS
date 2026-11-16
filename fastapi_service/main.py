@@ -1,46 +1,120 @@
 """
-Ledgerly FastAPI Data-Fetching & Analytics Service
-Provides high-speed asyncpg connection-pooled endpoints for dashboard KPIs,
-receipt registers, date-range reports, and public verification.
+IBMS · Ledgerly Modular Monolith FastAPI Application Entry Point (MP-15).
+Integrates:
+- All 13 IBMS functional modules under `/api/v1`
+- Standardized Request/Response/Error contracts & OpenAPI documentation
+- RBAC & Permission enforcement + Audit logging
+- Idempotency & Rate limiting
+- Backward-compatible Next.js companion endpoints (`/health`, `/api/v1/dashboard-stats`, `/api/v1/reports`)
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 import asyncpg
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from fastapi_service.api.router import api_v1_router
+from fastapi_service.core.config import settings
+from fastapi_service.core.exceptions import register_exception_handlers
+from fastapi_service.core.logging import configure_logging
+from fastapi_service.core.middleware import RequestContextMiddleware
+from fastapi_service.core.pagination import ApiResponse
+from fastapi_service.database import get_db
+from fastapi_service.services.financial_service import ensure_company_settings
 
 load_dotenv()
+configure_logging()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 INTERNAL_SECRET = os.getenv("FASTAPI_INTERNAL_SECRET", "ledgerly-internal-dev-secret")
 
 pool: Optional[asyncpg.Pool] = None
 
+OPENAPI_TAGS = [
+    {"name": "Authentication", "description": "Staff login, logout, current user session, and password recovery."},
+    {"name": "Users & RBAC", "description": "User management, role definitions, and granular permission assignments."},
+    {"name": "Company Settings & Files", "description": "Organization profile, document templates, and secure file uploads/downloads."},
+    {"name": "CRM & Clients", "description": "Canonical clients, corporate contacts, categories, tags, interactions, documents, and derived client ledgers."},
+    {"name": "Quotations", "description": "Commercial quotations, lifecycle transitions, invoice conversion, and PDF generation."},
+    {"name": "Invoices & Receivables", "description": "Accounts receivable billing, issuance, cancellation, and PDF generation."},
+    {"name": "Payments & Allocations", "description": "Payment recording, controlled confirmation, partial/multi-invoice allocations, reversals, and refunds."},
+    {"name": "Receipts", "description": "Idempotent receipt generation from confirmed payments, reprinting, cancellation, and PDF generation."},
+    {"name": "Public Verification", "description": "Isolated, rate-limited public receipt verification by verification code or receipt number."},
+    {"name": "Communications", "description": "Email and SMS notification templates and delivery state logs."},
+    {"name": "Reconciliation", "description": "External bank/M-Pesa statement imports, match suggestions, confirmations, and rejections."},
+    {"name": "Tax Configuration", "description": "Configurable tax codes, rates, effective dates, and inclusive/exclusive rules."},
+    {"name": "Dashboard & Financial Reports", "description": "Executive KPIs, revenue/collections reports, and accounts receivable aging."},
+    {"name": "Audit Logs", "description": "Immutable security and financial audit trail inspection."},
+]
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global pool
     if DATABASE_URL:
-        pool = await asyncpg.create_pool(
-            DATABASE_URL, min_size=2, max_size=12, statement_cache_size=0
-        )
+        try:
+            pool = await asyncpg.create_pool(
+                DATABASE_URL, min_size=1, max_size=8, statement_cache_size=0
+            )
+        except Exception:
+            pool = None
     yield
     if pool:
         await pool.close()
 
 
 app = FastAPI(
-    title="Ledgerly FastAPI Data Service",
-    version="1.0.0",
+    title=settings.app_name,
+    version=settings.app_version,
+    description=(
+        "Production-grade modular monolith API for the Integrated Business Management System (IBMS). "
+        "Enforces authoritative Decimal money arithmetic, transactional payment/receipt separation, "
+        "RBAC authorization, idempotency, and immutable historical document snapshots."
+    ),
+    openapi_tags=OPENAPI_TAGS,
     lifespan=lifespan,
 )
+
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID", "X-Session-Token"],
+)
+
+register_exception_handlers(app)
+
+
+@app.get("/health", tags=["Health & Observability"])
+async def health() -> dict[str, Any]:
+    """Liveness check distinguishing application process health from database readiness."""
+    return {
+        "status": "ok",
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "database_pool_initialized": pool is not None,
+    }
+
+
+@app.get("/health/ready", response_model=ApiResponse[dict[str, Any]], tags=["Health & Observability"])
+def readiness_check(db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
+    """Readiness probe verifying active PostgreSQL connectivity without leaking sensitive configuration."""
+    db.execute(text("SELECT 1"))
+    return ApiResponse(
+        data={"status": "ready", "database": "connected"},
+        message="Application and PostgreSQL database are ready",
+    )
 
 
 def verify_internal(secret: Optional[str], active: Optional[str]) -> None:
@@ -50,29 +124,20 @@ def verify_internal(secret: Optional[str], active: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Active staff account required")
 
 
-def require_pool() -> asyncpg.Pool:
-    if pool is None:
-        raise HTTPException(status_code=503, detail="Database pool not initialized")
-    return pool
-
-
-@app.get("/health")
-async def health() -> dict[str, Any]:
-    return {"status": "ok", "database_connected": pool is not None}
-
-
-@app.get("/api/v1/dashboard-stats")
-async def dashboard_stats(
+@app.get("/api/v1/dashboard-stats", tags=["Dashboard & Financial Reports"])
+def dashboard_stats_compat(
     x_internal_secret: Optional[str] = Header(default=None),
     x_user_role: Optional[str] = Header(default=None),
     x_user_active: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    """Preserved backward-compatible companion endpoint for Next.js `/api/dashboard`."""
     verify_internal(x_internal_secret, x_user_active)
-    db_pool = require_pool()
     is_admin = x_user_role == "admin"
+    ensure_company_settings(db)
 
-    async with db_pool.acquire() as conn:
-        counts = await conn.fetchrow(
+    counts = db.execute(
+        text(
             """
             SELECT
               (SELECT count(*) FROM public.clients) AS clients,
@@ -90,8 +155,10 @@ async def dashboard_stats(
             FROM public.receipts
             """
         )
+    ).mappings().one()
 
-        verify_agg = await conn.fetchrow(
+    verify_agg = db.execute(
+        text(
             """
             SELECT
               count(*) AS total,
@@ -100,8 +167,10 @@ async def dashboard_stats(
             FROM public.verify_attempts
             """
         )
+    ).mappings().one()
 
-        recent_verify = await conn.fetch(
+    recent_verify = db.execute(
+        text(
             """
             SELECT id, identifier, result, created_at
             FROM public.verify_attempts
@@ -109,8 +178,10 @@ async def dashboard_stats(
             LIMIT 6
             """
         )
+    ).mappings().all()
 
-        recent_clients = await conn.fetch(
+    recent_clients = db.execute(
+        text(
             """
             SELECT
               c.id::text AS id,
@@ -126,10 +197,12 @@ async def dashboard_stats(
             LIMIT 6
             """
         )
+    ).mappings().all()
 
-        daily = None
-        if is_admin:
-            daily_rows = await conn.fetch(
+    daily = None
+    if is_admin:
+        daily_rows = db.execute(
+            text(
                 """
                 SELECT
                   d::date::text AS day,
@@ -148,138 +221,66 @@ async def dashboard_stats(
                 ORDER BY d ASC
                 """
             )
-            daily = [dict(r) for r in daily_rows]
+        ).mappings().all()
+        daily = [dict(r) for r in daily_rows]
 
-        return {
-            "currency": counts["currency"] or "KES",
-            "company_name": counts["company_name"] or "Northstar Studio",
-            "clients": int(counts["clients"]),
-            "new_clients_month": int(counts["new_clients_month"]),
-            "issued": int(counts["issued"]),
-            "drafts": int(counts["drafts"]),
-            "cancelled": int(counts["cancelled"]),
-            "value_total": float(counts["value_total"]) if is_admin else None,
-            "today_count": int(counts["today_count"]),
-            "today_value": float(counts["today_value"]) if is_admin else None,
-            "month_count": int(counts["month_count"]),
-            "month_value": float(counts["month_value"]) if is_admin else None,
-            "daily": daily,
-            "verify_stats": {
-                "total": int(verify_agg["total"]) if verify_agg else 0,
-                "valid": int(verify_agg["valid"]) if verify_agg else 0,
-                "invalid": int(verify_agg["invalid"]) if verify_agg else 0,
-                "recent": [
-                    {
-                        "id": int(v["id"]),
-                        "identifier": v["identifier"],
-                        "result": v["result"],
-                        "created_at": v["created_at"].isoformat(),
-                    }
-                    for v in recent_verify
-                ],
-            },
-            "recent_clients": [
+    return {
+        "currency": counts["currency"] or "KES",
+        "company_name": counts["company_name"] or "Northstar Studio",
+        "clients": int(counts["clients"]),
+        "new_clients_month": int(counts["new_clients_month"]),
+        "issued": int(counts["issued"]),
+        "drafts": int(counts["drafts"]),
+        "cancelled": int(counts["cancelled"]),
+        "value_total": float(counts["value_total"]) if is_admin else None,
+        "today_count": int(counts["today_count"]),
+        "today_value": float(counts["today_value"]) if is_admin else None,
+        "month_count": int(counts["month_count"]),
+        "month_value": float(counts["month_value"]) if is_admin else None,
+        "daily": daily,
+        "verify_stats": {
+            "total": int(verify_agg["total"]) if verify_agg else 0,
+            "valid": int(verify_agg["valid"]) if verify_agg else 0,
+            "invalid": int(verify_agg["invalid"]) if verify_agg else 0,
+            "recent": [
                 {
-                    "id": c["id"],
-                    "name": c["name"],
-                    "phone": c["phone"],
-                    "address": c["address"],
-                    "receipt_count": int(c["receipt_count"]),
-                    "total_spending": float(c["total_spending"]) if is_admin else None,
+                    "id": int(v["id"]),
+                    "identifier": v["identifier"],
+                    "result": v["result"],
+                    "created_at": v["created_at"].isoformat(),
                 }
-                for c in recent_clients
+                for v in recent_verify
             ],
-        }
-
-
-@app.get("/api/v1/receipts")
-async def list_receipts(
-    client: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    limit: int = Query(default=300, ge=1, le=1000),
-    x_internal_secret: Optional[str] = Header(default=None),
-    x_user_active: Optional[str] = Header(default=None),
-) -> list[dict[str, Any]]:
-    verify_internal(x_internal_secret, x_user_active)
-    db_pool = require_pool()
-
-    clauses: list[str] = []
-    args: list[Any] = []
-    if client:
-        args.append(client)
-        clauses.append(f"r.client_id = ${len(args)}::uuid")
-    if status in ("draft", "finalized", "cancelled"):
-        args.append(status)
-        clauses.append(f"r.status = ${len(args)}::public.receipt_status")
-
-    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    args.append(limit)
-
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT
-              r.id::text,
-              r.status::text,
-              r.receipt_number,
-              r.verification_code,
-              r.client_id::text,
-              r.customer_name,
-              r.total::text,
-              r.payment_status,
-              r.amount_paid::text,
-              r.balance_due::text,
-              r.payment_method,
-              r.currency,
-              r.finalized_at,
-              r.created_at,
-              r.print_count,
-              c.name AS client_name
-            FROM public.receipts r
-            LEFT JOIN public.clients c ON c.id = r.client_id
-            {where_sql}
-            ORDER BY r.created_at DESC
-            LIMIT ${len(args)}
-            """,
-            *args,
-        )
-        return [
+        },
+        "recent_clients": [
             {
-                "id": r["id"],
-                "status": r["status"],
-                "receipt_number": r["receipt_number"],
-                "verification_code": r["verification_code"],
-                "client_id": r["client_id"],
-                "customer_name": r["customer_name"],
-                "total": r["total"],
-                "payment_status": r["payment_status"] or "paid",
-                "amount_paid": r["amount_paid"] or r["total"],
-                "balance_due": r["balance_due"] or "0.00",
-                "payment_method": r["payment_method"] or "M-Pesa",
-                "currency": r["currency"],
-                "finalized_at": r["finalized_at"].isoformat() if r["finalized_at"] else None,
-                "created_at": r["created_at"].isoformat(),
-                "print_count": r["print_count"],
-                "clients": {"name": r["client_name"]} if r["client_name"] else None,
+                "id": c["id"],
+                "name": c["name"],
+                "phone": c["phone"],
+                "address": c["address"],
+                "receipt_count": int(c["receipt_count"]),
+                "total_spending": float(c["total_spending"]) if is_admin else None,
             }
-            for r in rows
-        ]
+            for c in recent_clients
+        ],
+    }
 
 
-@app.get("/api/v1/reports")
-async def reports_query(
+@app.get("/api/v1/reports", tags=["Dashboard & Financial Reports"])
+def reports_query_compat(
     from_date: str = Query(alias="from"),
     to_date: str = Query(alias="to"),
     status: str = Query(default="finalized"),
     x_internal_secret: Optional[str] = Header(default=None),
     x_user_role: Optional[str] = Header(default=None),
     x_user_active: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
+    """Preserved backward-compatible companion endpoint for Next.js `/api/reports`."""
     verify_internal(x_internal_secret, x_user_active)
     if x_user_role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
 
-    db_pool = require_pool()
     dt_from = datetime.fromisoformat(f"{from_date}T00:00:00+00:00")
     dt_to = datetime.fromisoformat(f"{to_date}T23:59:59.999999+00:00")
 
@@ -289,8 +290,8 @@ async def reports_query(
     elif status == "cancelled":
         status_clause = "AND r.status = 'cancelled'"
 
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
+    rows = db.execute(
+        text(
             f"""
             SELECT
               r.id::text,
@@ -304,25 +305,29 @@ async def reports_query(
               c.name AS client_name
             FROM public.receipts r
             LEFT JOIN public.clients c ON c.id = r.client_id
-            WHERE r.finalized_at >= $1 AND r.finalized_at <= $2
+            WHERE r.finalized_at >= :dt_from AND r.finalized_at <= :dt_to
             {status_clause}
             ORDER BY r.finalized_at DESC
             LIMIT 10000
-            """,
-            dt_from,
-            dt_to,
-        )
-        return [
-            {
-                "id": r["id"],
-                "status": r["status"],
-                "receipt_number": r["receipt_number"],
-                "customer_name": r["customer_name"],
-                "total": r["total"],
-                "currency": r["currency"],
-                "finalized_at": r["finalized_at"].isoformat() if r["finalized_at"] else None,
-                "print_count": r["print_count"],
-                "clients": {"name": r["client_name"]} if r["client_name"] else None,
-            }
-            for r in rows
-        ]
+            """
+        ),
+        {"dt_from": dt_from, "dt_to": dt_to},
+    ).mappings().all()
+
+    return [
+        {
+            "id": r["id"],
+            "status": r["status"],
+            "receipt_number": r["receipt_number"],
+            "customer_name": r["customer_name"],
+            "total": r["total"],
+            "currency": r["currency"],
+            "finalized_at": r["finalized_at"].isoformat() if r["finalized_at"] else None,
+            "print_count": r["print_count"],
+            "clients": {"name": r["client_name"]} if r["client_name"] else None,
+        }
+        for r in rows
+    ]
+
+
+app.include_router(api_v1_router)

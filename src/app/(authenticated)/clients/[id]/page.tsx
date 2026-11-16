@@ -174,7 +174,7 @@ export default function ClientProfilePage({ params }: { params: Promise<{ id: st
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={openEditModal}
@@ -182,6 +182,27 @@ export default function ClientProfilePage({ params }: { params: Promise<{ id: st
           >
             Edit client
           </button>
+
+          <Link
+            href="/quotations"
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] font-medium text-[#20232D] hover:bg-[#F7F8FA]"
+          >
+            Quotations
+          </Link>
+
+          <Link
+            href="/invoices"
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] font-medium text-[#20232D] hover:bg-[#F7F8FA]"
+          >
+            Invoices
+          </Link>
+
+          <Link
+            href="/payments"
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-[#E6E8EF] bg-white px-3.5 text-[13px] font-medium text-[#20232D] hover:bg-[#F7F8FA]"
+          >
+            Payments
+          </Link>
 
           <Link
             href="/receipts/new"

@@ -172,3 +172,56 @@ export function StatusBadge({ status }: { status: "draft" | "finalized" | "cance
     </span>
   );
 }
+
+const LIFECYCLE_STYLES: Record<string, { label: string; symbol: string; cls: string }> = {
+  // Quotations & Invoices & Receipts
+  draft: { label: "Draft", symbol: "○", cls: "border-[#F4DFB8] bg-[#FCF3E3] text-[#9A6316]" },
+  sent: { label: "Issued / Sent", symbol: "●", cls: "border-[#BAE6FD] bg-[#E0F2FE] text-[#0369A1]" },
+  issued: { label: "Issued", symbol: "●", cls: "border-[#BAE6FD] bg-[#E0F2FE] text-[#0369A1]" },
+  approved: { label: "Accepted", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  converted: { label: "Converted to Invoice", symbol: "↗", cls: "border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]" },
+  partially_paid: { label: "Partially Paid", symbol: "◐", cls: "border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]" },
+  paid: { label: "Paid in Full", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  finalized: { label: "Finalized", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  overdue: { label: "Overdue", symbol: "!", cls: "border-[#FECDD3] bg-[#FFF1F2] text-[#BE123C]" },
+  rejected: { label: "Rejected", symbol: "✕", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  expired: { label: "Expired", symbol: "◷", cls: "border-[#E6E8EF] bg-[#F3F4F8] text-[#646977]" },
+  cancelled: { label: "Cancelled", symbol: "✕", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  void: { label: "Void", symbol: "✕", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  // Payments
+  pending: { label: "Pending Confirmation", symbol: "◷", cls: "border-[#F4DFB8] bg-[#FCF3E3] text-[#9A6316]" },
+  confirmed: { label: "Confirmed", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  partially_refunded: { label: "Partially Refunded", symbol: "↺", cls: "border-[#E9D5FF] bg-[#F3E8FF] text-[#6B21A8]" },
+  refunded: { label: "Refunded", symbol: "↺", cls: "border-[#E9D5FF] bg-[#F3E8FF] text-[#6B21A8]" },
+  reversed: { label: "Reversed", symbol: "✕", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  failed: { label: "Failed", symbol: "✕", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  // Reconciliation & Communications
+  unmatched: { label: "Unmatched", symbol: "○", cls: "border-[#F4DFB8] bg-[#FCF3E3] text-[#9A6316]" },
+  suggested: { label: "Suggested Match", symbol: "?", cls: "border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]" },
+  matched: { label: "Confirmed Match", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  queued: { label: "Queued", symbol: "◷", cls: "border-[#BAE6FD] bg-[#E0F2FE] text-[#0369A1]" },
+  delivered: { label: "Delivered", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+  bounced: { label: "Bounced", symbol: "!", cls: "border-[#F6D2D6] bg-[#FCECEE] text-[#B4343B]" },
+  open: { label: "Open Batch", symbol: "●", cls: "border-[#BAE6FD] bg-[#E0F2FE] text-[#0369A1]" },
+  in_review: { label: "In Review", symbol: "◐", cls: "border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3]" },
+  completed: { label: "Completed", symbol: "✓", cls: "border-[#BDE5CE] bg-[#E8F6EE] text-[#16794F]" },
+};
+
+export function DocumentStatusBadge({ status }: { status?: string | null }) {
+  const key = (status ?? "draft").toLowerCase();
+  const meta = LIFECYCLE_STYLES[key] ?? {
+    label: status || "Unknown",
+    symbol: "•",
+    cls: "border-[#E6E8EF] bg-[#F3F4F8] text-[#4A4F5C]",
+  };
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-[11.5px] font-semibold ${meta.cls}`}
+    >
+      <span aria-hidden="true" className="text-[10px]">
+        {meta.symbol}
+      </span>
+      <span>{meta.label}</span>
+    </span>
+  );
+}

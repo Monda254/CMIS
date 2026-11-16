@@ -36,6 +36,8 @@ export async function GET(
       headers: {
         "Content-Type": contentType,
         "Cache-Control": "private, max-age=1800",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
       },
     });
   } catch (err) {

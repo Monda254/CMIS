@@ -177,6 +177,49 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Quick Actions Bar (Section 10.4) */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E6E8EF] bg-white p-3">
+        <span className="px-2 text-[11px] font-semibold tracking-wider text-[#7A7F8C] uppercase">
+          Quick Actions:
+        </span>
+        <Link
+          href="/clients"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          + Add Client
+        </Link>
+        <Link
+          href="/quotations"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          + Create Quotation
+        </Link>
+        <Link
+          href="/invoices"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          + Create Invoice
+        </Link>
+        <Link
+          href="/payments"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          + Record Payment
+        </Link>
+        <Link
+          href="/receipts"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          View Receipts
+        </Link>
+        <Link
+          href="/reconciliation"
+          className="rounded-lg border border-[#E6E8EF] bg-[#F7F8FA] px-3 py-1.5 text-[12.5px] font-medium text-[#20232D] hover:bg-[#EEECFC] hover:text-[#5848D6]"
+        >
+          Reconciliation
+        </Link>
+      </div>
+
       {/* 4 KPI Cards Row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-[#E6E8EF] bg-white p-5">

@@ -8,12 +8,18 @@ import {
   BarChart3,
   CheckCircle2,
   ChevronDown,
+  CreditCard,
   ExternalLink,
+  FileCheck2,
+  FileSpreadsheet,
   FileText,
+  GitCompareArrows,
   LayoutGrid,
   Lock,
   LogOut,
+  Mail,
   Menu,
+  Percent,
   Plus,
   Search,
   ShieldAlert,
@@ -23,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { useMe, useSignOut } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { formatMoney } from "@/lib/format";
 import {
   Sheet,
@@ -54,6 +61,9 @@ type VerifyResponse = {
 
 function getBreadcrumbLabel(pathname: string): string {
   if (pathname === "/dashboard") return "Overview";
+  if (pathname.startsWith("/quotations")) return "Quotations & proposals";
+  if (pathname.startsWith("/invoices")) return "Invoices & receivables";
+  if (pathname.startsWith("/payments")) return "Payments & allocations";
   if (pathname === "/receipts/new") return "Create receipt";
   if (pathname.endsWith("/edit")) return "Edit receipt";
   if (pathname.endsWith("/print")) return "Print preview";
@@ -61,6 +71,9 @@ function getBreadcrumbLabel(pathname: string): string {
   if (pathname === "/receipts") return "Receipts";
   if (pathname.startsWith("/clients/")) return "Client profile";
   if (pathname === "/clients") return "Clients";
+  if (pathname.startsWith("/reconciliation")) return "Transaction reconciliation";
+  if (pathname.startsWith("/communications")) return "Communications";
+  if (pathname.startsWith("/taxes")) return "Tax configuration";
   if (pathname === "/reports") return "Reports";
   if (pathname === "/settings") return "Company settings";
   if (pathname === "/users") return "Team & access";
@@ -144,9 +157,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const manageNav = [
     {
       href: "/dashboard",
-      label: "Overview",
+      label: "Dashboard",
       icon: LayoutGrid,
       active: pathname === "/dashboard",
+      show: true,
+    },
+    {
+      href: "/clients",
+      label: "Clients",
+      icon: Users,
+      active: pathname.startsWith("/clients"),
+      show: hasPermission(me.data, "clients:read"),
+    },
+    {
+      href: "/quotations",
+      label: "Quotations",
+      icon: FileSpreadsheet,
+      active: pathname.startsWith("/quotations"),
+      show: hasPermission(me.data, "quotations:read"),
+    },
+    {
+      href: "/invoices",
+      label: "Invoices",
+      icon: FileCheck2,
+      active: pathname.startsWith("/invoices"),
+      show: hasPermission(me.data, "invoices:read"),
+    },
+    {
+      href: "/payments",
+      label: "Payments",
+      icon: CreditCard,
+      active: pathname.startsWith("/payments"),
+      show: hasPermission(me.data, "payments:read"),
     },
     {
       href: "/receipts",
@@ -154,28 +196,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       icon: FileText,
       badge: totalReceiptsCount > 0 ? totalReceiptsCount : undefined,
       active: pathname.startsWith("/receipts"),
+      show: hasPermission(me.data, "receipts:read"),
     },
     {
-      href: "/clients",
-      label: "Clients",
-      icon: Users,
-      active: pathname.startsWith("/clients"),
+      href: "/communications",
+      label: "Communications",
+      icon: Mail,
+      active: pathname.startsWith("/communications"),
+      show: hasPermission(me.data, "communications:read"),
+    },
+    {
+      href: "/reconciliation",
+      label: "Reconciliation",
+      icon: GitCompareArrows,
+      active: pathname.startsWith("/reconciliation"),
+      show: hasPermission(me.data, "reconciliation:read") || isAdmin,
     },
     {
       href: "/verify",
       label: "Verification",
       icon: ShieldCheck,
       active: pathname.startsWith("/verify"),
+      show: true,
     },
     {
       href: "/reports",
       label: "Reports",
       icon: BarChart3,
       active: pathname.startsWith("/reports"),
+      show: hasPermission(me.data, "reports:read") || isAdmin,
     },
-  ];
+  ].filter((item) => item.show);
 
   const workspaceNav = [
+    {
+      href: "/users",
+      label: "Team & access",
+      icon: Users,
+      active: pathname.startsWith("/users"),
+    },
     {
       href: "/settings",
       label: "Company settings",
@@ -183,10 +242,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       active: pathname.startsWith("/settings"),
     },
     {
-      href: "/users",
-      label: "Team & access",
-      icon: Users,
-      active: pathname.startsWith("/users"),
+      href: "/taxes",
+      label: "Tax configuration",
+      icon: Percent,
+      active: pathname.startsWith("/taxes"),
     },
     {
       href: "/activity",

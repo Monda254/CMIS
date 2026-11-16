@@ -394,10 +394,29 @@ def test_relationship_quote_to_invoice_conversion_preserves_quote(db_engine, act
         session.add(invoice)
         session.flush()
 
+        inv_item = InvoiceItem(
+            invoice_id=invoice.id,
+            position=0,
+            description=q_item.description,
+            quantity=q_item.quantity,
+            unit_price=q_item.unit_price,
+            tax_rate=q_item.tax_rate,
+            tax_amount=q_item.tax_amount,
+            line_subtotal=q_item.line_subtotal,
+            line_total=q_item.line_total,
+        )
+        session.add(inv_item)
+        session.flush()
+
+        session.refresh(client)
+        session.refresh(invoice)
         assert invoice.quote_id == quote.id
         assert quote.status == "converted"
         assert quote.total == Decimal("58000.00")
         assert len(quote.items) == 1
+        assert len(invoice.items) == 1
+        assert len(client.quotes) == 1
+        assert len(client.invoices) == 1
         session.rollback()
 
 
@@ -1019,28 +1038,36 @@ def test_financial_historical_snapshot_immutability(db_engine, actor_user_id):
 
 def test_concurrency_numbering_sequences_parallel_allocations(db_engine):
     """
-    Spawns 8 concurrent worker sessions allocating numbers from the same sequence scope
-    and verifies zero duplicate document numbers and exact monotonic increments.
+    Spawns 8 concurrent worker sessions allocating invoice numbers, receipt numbers,
+    and verification codes in parallel and verifies zero duplicates and monotonic increments.
     """
-    test_prefix = f"CT{uuid.uuid4().hex[:4].upper()}"
+    inv_prefix = f"CI{uuid.uuid4().hex[:4].upper()}"
+    rcp_prefix = f"CR{uuid.uuid4().hex[:4].upper()}"
 
-    def worker(_idx: int) -> str:
+    def worker(_idx: int) -> tuple[str, str, str]:
         with Session(db_engine) as s:
-            num = allocate_document_number(s, "invoice", test_prefix, scope_year=2026)
+            inv_num = allocate_document_number(s, "invoice", inv_prefix, scope_year=2026)
+            rcp_num = allocate_document_number(s, "receipt", rcp_prefix, scope_year=2026)
+            v_code = generate_verification_code()
             s.commit()
-            return num
+            return inv_num, rcp_num, v_code
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(worker, range(8)))
 
-    assert len(results) == 8
-    assert len(set(results)) == 8, f"Duplicate numbers generated under concurrency: {results}"
+    inv_nums = [r[0] for r in results]
+    rcp_nums = [r[1] for r in results]
+    v_codes = [r[2] for r in results]
 
-    # Clean up test sequence row
+    assert len(set(inv_nums)) == 8, f"Duplicate invoice numbers generated under concurrency: {inv_nums}"
+    assert len(set(rcp_nums)) == 8, f"Duplicate receipt numbers generated under concurrency: {rcp_nums}"
+    assert len(set(v_codes)) == 8, f"Duplicate verification codes generated under concurrency: {v_codes}"
+
+    # Clean up test sequence rows
     with Session(db_engine) as cleanup:
         cleanup.execute(
-            text("DELETE FROM public.numbering_sequences WHERE prefix = :p"),
-            {"p": test_prefix},
+            text("DELETE FROM public.numbering_sequences WHERE prefix IN (:p1, :p2)"),
+            {"p1": inv_prefix, "p2": rcp_prefix},
         )
         cleanup.commit()
 
@@ -1118,7 +1145,7 @@ def test_migration_alembic_current_head_version(db_engine):
     with db_engine.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM public.alembic_version")).fetchone()
     assert row is not None
-    assert row[0] == "20261112_0001"
+    assert row[0] in ("20261112_0001", "20261116_0002")
 
 
 def test_migration_idempotent_upgrade_head():
@@ -1139,10 +1166,12 @@ def test_migration_idempotent_upgrade_head():
 def test_performance_explain_analyze_representative_queries(db_engine):
     representative_queries = [
         ("Client search by name", "EXPLAIN ANALYZE SELECT id, name, phone FROM public.clients WHERE name ILIKE 'Safaricom%' LIMIT 20"),
+        ("Client transaction history", "EXPLAIN ANALYZE SELECT p.id, p.payment_reference, p.amount, p.payment_date FROM public.payments p JOIN public.clients c ON c.id = p.client_id WHERE c.status = 'active' ORDER BY p.payment_date DESC LIMIT 50"),
         ("Invoice receivables listing", "EXPLAIN ANALYZE SELECT id, invoice_number, balance_due FROM public.invoices WHERE status IN ('issued', 'partially_paid', 'overdue') ORDER BY due_date ASC LIMIT 50"),
         ("Receipt public verification lookup", "EXPLAIN ANALYZE SELECT id, receipt_number, status, payment_status, total, amount_paid, balance_due FROM public.receipts WHERE verification_code = 'PAID2026KE' LIMIT 1"),
-        ("Payment history by client", "EXPLAIN ANALYZE SELECT id, payment_reference, amount, status FROM public.payments WHERE status = 'confirmed' ORDER BY payment_date DESC LIMIT 50"),
-        ("Authoritative client ledger summary", "EXPLAIN ANALYZE SELECT * FROM public.v_client_ledger_summary LIMIT 25"),
+        ("Payment history by status and date", "EXPLAIN ANALYZE SELECT id, payment_reference, amount, status FROM public.payments WHERE status = 'confirmed' ORDER BY payment_date DESC LIMIT 50"),
+        ("Dashboard aggregates", "EXPLAIN ANALYZE SELECT count(*) FILTER (WHERE status = 'finalized') AS issued_count, coalesce(sum(total) FILTER (WHERE status = 'finalized'), 0) AS issued_total FROM public.receipts"),
+        ("Financial reports & client ledger summary", "EXPLAIN ANALYZE SELECT * FROM public.v_client_ledger_summary LIMIT 25"),
     ]
     with db_engine.connect() as conn:
         for label, sql in representative_queries:

@@ -149,3 +149,20 @@ export async function requireAdmin(): Promise<SessionUser> {
   if (user.role !== "admin") throw new HttpError(403, "Administrator access required");
   return user;
 }
+
+const authRateBuckets = new Map<string, number[]>();
+
+/**
+ * Sliding-window authentication rate limiter for Next.js auth endpoints (MP-17 SEC-02).
+ */
+export function enforceAuthRateLimit(bucketKey: string, maxAttempts = 15, windowMs = 5 * 60 * 1000): void {
+  const now = Date.now();
+  const cutoff = now - windowMs;
+  const existing = (authRateBuckets.get(bucketKey) ?? []).filter((ts) => ts > cutoff);
+  if (existing.length >= maxAttempts) {
+    authRateBuckets.set(bucketKey, existing);
+    throw new HttpError(429, "Too many authentication attempts. Please wait a few minutes before retrying.");
+  }
+  existing.push(now);
+  authRateBuckets.set(bucketKey, existing);
+}

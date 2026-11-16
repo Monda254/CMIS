@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -63,6 +64,11 @@ export async function PATCH(request: Request) {
       })
       .where(eq(schema.users.id, userId));
 
+    // Immediately revoke active sessions if user is deactivated (MP-17 SEC-01)
+    if (!active) {
+      await db.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+    }
+
     await logAudit(admin.id, "user.updated", "user", userId, { role, active });
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -83,13 +89,14 @@ export async function POST(request: Request) {
     const email = (body.email ?? "").trim().toLowerCase();
     const fullName = (body.fullName ?? "").trim() || email.split("@")[0] || "Team Member";
     const role = body.role === "admin" ? "admin" : "cashier";
-    const password = (body.password ?? "").trim() || "WelcomeFolio2026!";
+    // Generate cryptographically random password if omitted instead of a static fallback (MP-17 SEC-08)
+    const password = (body.password ?? "").trim() || randomBytes(16).toString("base64url");
 
     if (!email || !email.includes("@")) {
       return NextResponse.json({ message: "Valid email address is required" }, { status: 400 });
     }
-    if (password.length < 8) {
-      return NextResponse.json({ message: "Password must be at least 8 characters" }, { status: 400 });
+    if (password.length < 8 || password.length > 128) {
+      return NextResponse.json({ message: "Password must be between 8 and 128 characters" }, { status: 400 });
     }
 
     const existing = await db

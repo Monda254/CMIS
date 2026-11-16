@@ -29,7 +29,17 @@ export async function fetchFromFastApi<T>(
       cache: "no-store",
     });
     if (!res.ok) return null;
-    return (await res.json()) as T;
+    const payload = (await res.json()) as Record<string, unknown> | T;
+    if (
+      payload &&
+      typeof payload === "object" &&
+      !Array.isArray(payload) &&
+      "data" in payload &&
+      "message" in payload
+    ) {
+      return (payload as { data: T }).data;
+    }
+    return payload as T;
   } catch {
     return null;
   }

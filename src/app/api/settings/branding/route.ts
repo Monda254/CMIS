@@ -10,7 +10,34 @@ import { handleApiError } from "@/lib/server/http";
 
 const ALLOWED_FIELDS = new Set(["logo_url", "stamp_url", "signature_url"]);
 const ALLOWED_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
-const STORAGE_ROOT = path.join(process.cwd(), ".storage", "branding");
+const MAX_BRANDING_BYTES = 2 * 1024 * 1024; // 2 MB server-side cap (MP-17 SEC-03)
+const STORAGE_ROOT = path.resolve(process.cwd(), ".storage", "branding");
+
+function hasValidImageMagicBytes(bytes: Buffer, ext: string): boolean {
+  if (bytes.length < 12) return false;
+  if (ext === "png") {
+    return (
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
+  }
+  if (ext === "jpg" || ext === "jpeg") {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (ext === "webp") {
+    return (
+      bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+      bytes.subarray(8, 12).toString("ascii") === "WEBP"
+    );
+  }
+  return false;
+}
 
 function mapColumn(field: "logo_url" | "stamp_url" | "signature_url") {
   if (field === "logo_url") return { logoUrl: null as string | null };
@@ -31,16 +58,33 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) {
       return NextResponse.json({ message: "Image file is required" }, { status: 400 });
     }
+    if (file.size === 0 || file.size > MAX_BRANDING_BYTES) {
+      return NextResponse.json(
+        { message: "Branding image must be non-empty and at most 2 MB" },
+        { status: 400 },
+      );
+    }
 
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "png";
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ALLOWED_EXTS.has(ext)) {
       return NextResponse.json({ message: "Use a PNG, JPG or WebP image." }, { status: 400 });
     }
 
-    const relPath = `${field}/${randomUUID()}.${ext}`;
-    const fullPath = path.join(STORAGE_ROOT, relPath);
-    await mkdir(path.dirname(fullPath), { recursive: true });
     const bytes = Buffer.from(await file.arrayBuffer());
+    if (!hasValidImageMagicBytes(bytes, ext)) {
+      return NextResponse.json(
+        { message: "File binary signature does not match a valid PNG, JPEG, or WebP image" },
+        { status: 400 },
+      );
+    }
+
+    const relPath = `${field}/${randomUUID()}.${ext}`;
+    const fullPath = path.resolve(STORAGE_ROOT, relPath);
+    if (!fullPath.startsWith(STORAGE_ROOT + path.sep)) {
+      return NextResponse.json({ message: "Invalid storage path" }, { status: 400 });
+    }
+
+    await mkdir(path.dirname(fullPath), { recursive: true });
     await writeFile(fullPath, bytes);
 
     await ensureCompanySettings();

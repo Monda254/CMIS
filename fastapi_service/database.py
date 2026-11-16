@@ -1,24 +1,20 @@
 """
 Database engine, session factories, and SQLAlchemy 2.x declarative base for IBMS.
-Supports both asyncpg (FastAPI runtime) and psycopg2/asyncpg (Alembic & Pytest).
+Supports both asyncpg (FastAPI runtime) and psycopg2/asyncpg (Alembic, FastAPI sync dependencies & Pytest).
 """
 
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from typing import AsyncGenerator
-from urllib.parse import quote_plus, urlparse, urlunparse
+from typing import Generator
 
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine
+from sqlalchemy import Engine, MetaData, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 load_dotenv()
 
@@ -72,10 +68,46 @@ def build_async_engine(raw_url: str | None = None) -> AsyncEngine:
     )
 
 
-def build_sync_engine(raw_url: str | None = None):
+def build_sync_engine(raw_url: str | None = None) -> Engine:
     return create_engine(
         get_sync_database_url(raw_url),
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=8,
+        max_overflow=16,
     )
+
+
+_sync_engine: Engine | None = None
+_SessionLocal: sessionmaker[Session] | None = None
+
+
+def get_sync_engine() -> Engine:
+    global _sync_engine, _SessionLocal
+    if _sync_engine is None:
+        _sync_engine = build_sync_engine()
+        _SessionLocal = sessionmaker(bind=_sync_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    return _sync_engine
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    global _SessionLocal
+    if _SessionLocal is None:
+        get_sync_engine()
+    assert _SessionLocal is not None
+    return _SessionLocal
+
+
+def get_db() -> Generator[Session, None, None]:
+    """
+    FastAPI dependency providing a transactional SQLAlchemy 2.x Session per request.
+    Automatically rolls back uncommitted changes if an exception occurs.
+    """
+    factory = get_session_factory()
+    session = factory()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

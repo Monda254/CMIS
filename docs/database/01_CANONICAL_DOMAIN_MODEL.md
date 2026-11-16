@@ -26,7 +26,7 @@ The Integrated Business Management System (IBMS) database is designed as a **sin
 13. **Security, Rate-Limiting & Audit Logging**
 
 ### Core Architectural Guarantees
-- **Backward Compatibility with Existing Live Records:** All existing production tables (`users`, `sessions`, `company_settings`, `clients`, `receipt_sequences`, `receipts`, `receipt_items`, `audit_logs`, `verify_attempts`) are preserved without destructive changes and extended cleanly into the full 31-table IBMS canonical model.
+- **Backward Compatibility with Existing Live Records:** All existing production tables (`users`, `sessions`, `company_settings`, `clients`, `receipt_sequences`, `receipts`, `receipt_items`, `audit_logs`, `verify_attempts`) are preserved without destructive changes and extended cleanly into the full 37-table IBMS canonical model.
 - **Non-Linear Commercial Lifecycle:** Supports the full lifecycle (`Client → Interaction → Quotation → Invoice → Payment → Receipt → Reconciliation → Reporting`) while permitting valid shortcuts (e.g., direct Invoice without Quotation, direct Payment & Receipt for walk-in/cash sales without a prior Invoice).
 - **Strict Separation of Financial Concepts:**
   - **Quotations (`quotes`)** represent non-binding commercial offers.
@@ -37,7 +37,7 @@ The Integrated Business Management System (IBMS) database is designed as a **sin
 
 ---
 
-## 2. Complete Canonical Entity Inventory (31 Tables)
+## 2. Complete Canonical Entity Inventory (37 Tables)
 
 | # | Table Name | Functional Domain | Primary Key | Business Purpose & Ownership Boundary |
 |---:|---|---|---|---|
